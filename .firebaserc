@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "sasai-product-health-dashboard"
+  },
+  "targets": {
+    "sasai-product-health-dashboard": {
+      "hosting": {
+        "credit-console": [
+          "credit-rule-console"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+# Firebase deploy cache
+.firebase/
+firebase-debug.log*
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS cruft
+.DS_Store
