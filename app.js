@@ -1,4 +1,4 @@
-// Sasai Credit — Rule Engine Console: application logic
+// Sasai Credit, Rule Engine Console: application logic
 
 function initials(name) {
   return name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?';
@@ -45,7 +45,7 @@ function makeProfile(seed, idx) {
 const state = {
   screen: 'profiles',        // 'profiles' | global keys | 'profile' (the workspace)
   profileIdx: null,          // which profile the workspace shows
-  profileTab: PROFILE_TABS[0][0],  // active tab inside the workspace — step 1
+  profileTab: PROFILE_TABS[0][0],  // active tab inside the workspace, step 1
   mode: 'view',              // 'view' (read-only) | 'edit'
   profiles: PROFILE_SEEDS.map(makeProfile),
   scoreMin: 0,
@@ -106,7 +106,7 @@ function modelDensityAt(score) {
 // share evenly over the range gives a density that can be re-sliced by any band
 // layout. At the measured floors it reproduces the measured shares exactly, so
 // the Score bands table, the simulation chart and the approval rate can never
-// disagree — and a floor drag moves all three together.
+// disagree, and a floor drag moves all three together.
 function popDensityAt(profile, score) {
   const live = profile.liveBands || [];
   const total = live.reduce((n, b) => n + (Number(b.pop) || 0), 0);
@@ -199,10 +199,10 @@ function syncMatrix(c) {
   const need = Math.max(0, c.bands.length - 1);
   const cols = lim.matrixCols.length;
   if (!Array.isArray(lim.matrix)) lim.matrix = [];
-  while (lim.matrix.length < need) lim.matrix.push(new Array(cols).fill('—'));
+  while (lim.matrix.length < need) lim.matrix.push(new Array(cols).fill('n/a'));
   if (lim.matrix.length > need) lim.matrix.length = need;
   lim.matrix.forEach(row => {
-    while (row.length < cols) row.push('—');
+    while (row.length < cols) row.push('n/a');
     if (row.length > cols) row.length = cols;
   });
   return lim;
@@ -223,7 +223,7 @@ function chip(text) {
 /* ---------- Readable ink on a coloured fill ---------- */
 
 // The brand band ramp runs light (#98A2B3, #48C2CF) to dark (#172E7B). White
-// text is unreadable on the light end — 2.1:1 on the teal. Pick the ink from the
+// text is unreadable on the light end, 2.1:1 on the teal. Pick the ink from the
 // fill's own luminance so labels stay legible whatever the palette becomes.
 const INK_DARK = '#0B1A33';
 const INK_LIGHT = '#ffffff';
@@ -244,7 +244,7 @@ function inkOn(bg) {
   return contrastWith(bg, INK_LIGHT) >= contrastWith(bg, INK_DARK) ? INK_LIGHT : INK_DARK;
 }
 // Secondary line on the same fill. The mid-blue only reaches 4.75:1 against the
-// dark ink at full strength, so it gets no alpha at all — the size and weight
+// dark ink at full strength, so it gets no alpha at all. The size and weight
 // difference already separates it from the label above.
 function inkOnMuted(bg) {
   return inkOn(bg) === INK_LIGHT ? 'rgba(255,255,255,0.88)' : INK_DARK;
@@ -300,7 +300,7 @@ function splitValue(v) {
   if (!m) return { prefix: '', num: '', suffix: String(v ?? '').trim() };
   return { prefix: m[1] || '', num: m[2], suffix: m[3].trim() };
 }
-// A blank or unparseable numeric entry must not be written through — it would
+// A blank or unparseable numeric entry must not be written through, since it would
 // join to a value with no number in it, which splitValue then treats as suffix.
 // Fall back to the number already stored, or 0.
 function cleanNum(el, previous) {
@@ -356,7 +356,7 @@ function rcByCode(code) {
 
 function rcText(code) {
   const c = rcByCode(code);
-  return c ? `${c.code} · ${c.label}` : (code || '—');
+  return c ? `${c.code} · ${c.label}` : (code || 'n/a');
 }
 
 function markDirty() {
@@ -375,7 +375,7 @@ function setRule(id, key, v) {
 function navButtons(items) {
   return items.map(([key, label, icon]) => `
     <button class="nav-btn${state.screen === key ? ' active' : ''}" data-nav="${key}"
-      title="${esc(label)}" aria-label="Global setup — ${esc(label)}"
+      title="${esc(label)}" aria-label="Global setup: ${esc(label)}"
       aria-current="${state.screen === key ? 'page' : 'false'}">
       <span class="nav-icon" aria-hidden="true">${icon}</span>
       <span>${esc(label)}</span>
@@ -396,7 +396,7 @@ function renderNav() {
     ${top}
     <h2 class="nav-heading">Global setup</h2>
     <span class="nav-heading-rule" aria-hidden="true"></span>
-    <div class="nav-helper">Do this once before your first product. Shared by every product — change once, applies everywhere.</div>
+    <div class="nav-helper">Do this once before your first product. Shared by every product: change once, applies everywhere.</div>
     ${navButtons(NAV_GLOBAL)}`;
 }
 
@@ -416,11 +416,11 @@ function renderHeader() {
     const stepCount = SETUP_STEPS.length;
     const publishBtn = blockers.length
       ? `<button class="btn btn-primary is-disabled" data-action="publish-blocked"
-           title="Step ${stepCount} of ${stepCount} · Publish — finish ${esc(blockers.join(', '))} first"
-           aria-label="Step ${stepCount} of ${stepCount}: Publish — ${esc(pub.note)}. Finish ${esc(blockers.join(', '))} first.">Publish…</button>`
+           title="Step ${stepCount} of ${stepCount} · Publish: finish ${esc(blockers.join(', '))} first"
+           aria-label="Step ${stepCount} of ${stepCount}: Publish: ${esc(pub.note)}. Finish ${esc(blockers.join(', '))} first.">Publish…</button>`
       : `<button class="btn btn-primary" data-action="open-publish"
-           title="Step ${stepCount} of ${stepCount} · Publish — ${esc(pub.note)}"
-           aria-label="Step ${stepCount} of ${stepCount}: Publish — ${esc(pub.note)}">Publish…</button>`;
+           title="Step ${stepCount} of ${stepCount} · Publish: ${esc(pub.note)}"
+           aria-label="Step ${stepCount} of ${stepCount}: Publish: ${esc(pub.note)}">Publish…</button>`;
     const actions = isEdit ? `
       <div class="dirty-label">${state.saved ? (state.savedAt ? 'Saved just now' : 'All changes saved') : 'Unsaved changes'}</div>
       <button class="btn btn-outline" data-action="go-simulate">Run what-if</button>
@@ -452,7 +452,7 @@ function renderHeader() {
 
 /* ---------- Screens ---------- */
 
-// Progress for any profile, not just the open one — the list needs all of them.
+// Progress for any profile, not just the open one, since the list needs all of them.
 function profileProgress(idx) {
   const prevIdx = state.profileIdx;
   state.profileIdx = idx;
@@ -487,7 +487,7 @@ function renderProfiles() {
       <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" data-action="edit-profile" data-idx="${i}" aria-label="Edit ${esc(p.name)}">Edit</button>
         <button class="btn btn-outline btn-sm" data-action="duplicate-profile" data-idx="${i}" aria-label="Duplicate ${esc(p.name)}">Duplicate</button>
-        ${p.third ? `<button class="btn btn-outline btn-sm" data-action="${p.third === 'View' ? 'open-profile' : (p.third === 'Copy rules' ? 'open-duplicate' : 'noop')}" data-idx="${i}" aria-label="${esc(p.third)} — ${esc(p.name)}">${esc(p.third)}</button>` : ''}
+        ${p.third ? `<button class="btn btn-outline btn-sm" data-action="${p.third === 'View' ? 'open-profile' : (p.third === 'Copy rules' ? 'open-duplicate' : 'noop')}" data-idx="${i}" aria-label="${esc(p.third)}: ${esc(p.name)}">${esc(p.third)}</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -546,10 +546,10 @@ function valueEditor(r) {
       <span class="val-chips" data-rule="${r.id}" role="group" aria-label="Values for ${esc(ctx)}">
         ${values.map(v => `
           <button type="button" class="val-chip${chosen.includes(v) ? ' on' : ''}" data-action="val-chip" data-rule="${r.id}" data-val="${esc(v)}"
-            aria-pressed="${chosen.includes(v) ? 'true' : 'false'}" aria-label="${esc(v)} — ${chosen.includes(v) ? 'selected' : 'not selected'} for ${esc(ctx)}">${esc(v)}</button>`).join('')}
+            aria-pressed="${chosen.includes(v) ? 'true' : 'false'}" aria-label="${esc(v)}: ${chosen.includes(v) ? 'selected' : 'not selected'} for ${esc(ctx)}">${esc(v)}</button>`).join('')}
         ${chosen.filter(v => !values.includes(v)).map(v => `
           <button type="button" class="val-chip on val-chip-unknown" data-action="val-chip" data-rule="${r.id}" data-val="${esc(v)}" title="Not an allowed value for this parameter"
-            aria-pressed="true" aria-label="${esc(v)} — selected for ${esc(ctx)}, not an allowed value">${esc(v)} ⚠</button>`).join('')}
+            aria-pressed="true" aria-label="${esc(v)}: selected for ${esc(ctx)}, not an allowed value">${esc(v)} ⚠</button>`).join('')}
       </span>`;
     }
     const known = values.includes(r.value);
@@ -557,7 +557,7 @@ function valueEditor(r) {
     <select class="rule-value val-select${known ? '' : ' field-invalid'}" data-change="val-cat" data-rule="${r.id}"
       aria-label="Value for ${esc(ctx)}">
       ${values.map(v => `<option value="${esc(v)}"${v === r.value ? ' selected' : ''}>${esc(v)}</option>`).join('')}
-      ${known ? '' : `<option value="${esc(r.value)}" selected>${esc(r.value)} — not an allowed value</option>`}
+      ${known ? '' : `<option value="${esc(r.value)}" selected>${esc(r.value)} (not an allowed value)</option>`}
     </select>`;
   }
 
@@ -618,14 +618,14 @@ function renderRules() {
         const opts = paramsForSection(key).filter(d => d.group === g);
         return opts.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(opts.map(d => [d.key, d.label]), r.param)}</optgroup>` : '';
       }).join('') + (badParam
-        ? `<optgroup label="Not valid in this section"><option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} — not valid here</option></optgroup>`
+        ? `<optgroup label="Not valid in this section"><option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} (not valid here)</option></optgroup>`
         : '');
 
       const opOptions = optionGroup(operatorsForParam(r.param), r.op)
-        + (badOp ? `<option value="${esc(r.op)}" selected>${esc(OPLABEL[r.op] || r.op)} — not valid here</option>` : '');
+        + (badOp ? `<option value="${esc(r.op)}" selected>${esc(OPLABEL[r.op] || r.op)} (not valid here)</option>` : '');
 
       const actionOptions = optionGroup(actionsForSection(key), r.action)
-        + (badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} — not valid here</option>` : '');
+        + (badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} (not valid here)</option>` : '');
 
       const confirming = state.confirmRemove === r.id;
       return `
@@ -633,7 +633,7 @@ function renderRules() {
         <div class="rule-inner">
           <button class="switch${r.enabled ? ' on' : ''}" data-action="toggle-rule" data-rule="${r.id}"
             role="switch" aria-checked="${r.enabled ? 'true' : 'false'}"
-            aria-label="Rule ${esc(r.code)} enabled — ${esc(sentence(r))}"
+            aria-label="Rule ${esc(r.code)} enabled: ${esc(sentence(r))}"
             title="Enable or disable this rule"><span class="knob"></span></button>
           <div style="flex:1;min-width:0;">
             <div class="rule-sentence" style="color:${r.enabled ? '#101828' : '#5D6B82'};">${esc(sentence(r))}</div>
@@ -654,7 +654,7 @@ function renderRules() {
               <select class="rule-rc" data-change="rule-rc" data-rule="${r.id}"
                 aria-label="Reason code emitted by rule ${esc(r.code)}"
                 title="Code the engine emits when this rule determines the outcome">
-                <option value=""${r.rc ? '' : ' selected'}>— no code —</option>
+                <option value=""${r.rc ? '' : ' selected'}>(no code)</option>
                 ${state.reasonCodes.filter(c => c.kind === 'rule' && (c.active || c.code === r.rc))
                   .map(c => `<option value="${esc(c.code)}"${c.code === r.rc ? ' selected' : ''}>${esc(c.code)} · ${esc(c.label)}${c.active ? '' : ' (inactive)'}</option>`).join('')}
               </select>
@@ -674,7 +674,7 @@ function renderRules() {
     <div class="card section-card">
       <div class="section-head" data-action="toggle-section" data-section="${key}"
         role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}"
-        aria-label="${esc(title)} — ${enabledCount} of ${rules.length} rules active. ${open ? 'Collapse' : 'Expand'} section."
+        aria-label="${esc(title)}: ${enabledCount} of ${rules.length} rules active. ${open ? 'Collapse' : 'Expand'} section."
         style="border-bottom:${open ? '1px solid #E4E7EC' : 'none'};">
         <div class="section-num">${String(i + 1).padStart(2, '0')}</div>
         <div style="min-width:0;">
@@ -709,12 +709,12 @@ function renderRules() {
   </div>
 
   <ol class="howto" style="max-width:860px;margin-bottom:18px;">
-    <li><strong>What to check</strong> — the customer detail being tested, like age, income or the model score. These are named once in <span class="nav-link" data-nav="params">Global setup → Parameters &amp; features</span>; here you only pick one. Each group below offers just the details that make sense for it, so an eligibility check can't accidentally read a daily portfolio counter.</li>
-    <li><strong>The test and the value</strong> — "at least 18 years", "is one of Active". The value box matches what you're testing: money, a percentage, a length of time, or a list to tick.</li>
-    <li><strong>What happens</strong> — pass to the next rule, decline, send to a person to review, or cap the limit. Again, only the outcomes that suit that group are offered.</li>
-    <li><strong>Reason code</strong> — what gets recorded if this rule is the one that decides the outcome. You choose the code here; the actual wording shown to staff and customers lives in the <span class="nav-link" data-nav="reasoncodes">Reason-code catalogue</span>.</li>
+    <li><strong>What to check</strong>: the customer detail being tested, like age, income or the model score. These are named once in <span class="nav-link" data-nav="params">Global setup → Parameters &amp; features</span>; here you only pick one. Each group below offers just the details that make sense for it, so an eligibility check can't accidentally read a daily portfolio counter.</li>
+    <li><strong>The test and the value</strong>: "at least 18 years", "is one of Active". The value box matches what you're testing: money, a percentage, a length of time, or a list to tick.</li>
+    <li><strong>What happens</strong>: pass to the next rule, decline, send to a person to review, or cap the limit. Again, only the outcomes that suit that group are offered.</li>
+    <li><strong>Reason code</strong>: what gets recorded if this rule is the one that decides the outcome. You choose the code here; the actual wording shown to staff and customers lives in the <span class="nav-link" data-nav="reasoncodes">Reason-code catalogue</span>.</li>
   </ol>
-  <p class="howto-example" style="max-width:860px;margin-bottom:18px;">Use the switch on the left to turn a rule off without deleting it — it stops running but stays here so you can turn it back on.</p>
+  <p class="howto-example" style="max-width:860px;margin-bottom:18px;">Use the switch on the left to turn a rule off without deleting it. It stops running but stays here so you can turn it back on.</p>
 
   ${sections}`;
 }
@@ -758,7 +758,7 @@ function renderBands() {
       <div style="font-size:13px;color:#344054;font-variant-numeric:tabular-nums;">${b.floor}</div>
       <div style="font-size:13px;color:#344054;">${esc(b.decision)}</div>
       <div style="font-size:13px;color:#101828;font-weight:600;">${esc(b.limit)}</div>
-      <div style="font-size:13px;color:#344054;font-variant-numeric:tabular-nums;">${stats[i].badRate == null ? '—' : stats[i].badRate + '%'}</div>
+      <div style="font-size:13px;color:#344054;font-variant-numeric:tabular-nums;">${stats[i].badRate == null ? 'n/a' : stats[i].badRate + '%'}</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <div class="pop-track"><div class="pop-fill" style="width:${stats[i].pop * 2.6}%;background:${BAND_COLORS[i]};"></div></div>
         <span style="font-size:12px;color:#667085;font-variant-numeric:tabular-nums;width:38px;text-align:right;">${stats[i].pop}%</span>
@@ -767,10 +767,10 @@ function renderBands() {
 
   return `
   <h1 class="page-title">Score bands</h1>
-  <p class="page-desc" style="max-width:760px;">The model gives every customer a score out of 1000. On its own that number means nothing — a band is what turns it into a decision. Split the range into bands, and say what each band gets.</p>
+  <p class="page-desc" style="max-width:760px;">The model gives every customer a score out of 1000. On its own that number means nothing. A band is what turns it into a decision. Split the range into bands, and say what each band gets.</p>
   <ol class="howto" style="max-width:760px;margin-bottom:18px;">
     <li><strong>Drag a marker</strong> to move where one band ends and the next begins. Everyone whose score falls between two markers is treated the same way.</li>
-    <li><strong>Each band gets a decision</strong> — decline, approve, or approve with a cap — and a starting limit before affordability is taken into account.</li>
+    <li><strong>Each band gets a decision</strong>: decline, approve, or approve with a cap, plus a starting limit before affordability is taken into account.</li>
     <li><strong>Bad rate</strong> shows how often customers in that band have actually defaulted. It should fall as you move right; if it doesn't, the band boundaries are in the wrong place.</li>
   </ol>
 
@@ -805,11 +805,11 @@ function renderLimits() {
 
   const headCells = lim.matrixCols.map((c, j) => `
     <th><input class="matrix-col-input" value="${esc(c)}" data-change="lim-col" data-col="${j}"
-      aria-label="Affordability band ${j + 1} of ${lim.matrixCols.length} — column heading" /></th>`).join('');
+      aria-label="Affordability band ${j + 1} of ${lim.matrixCols.length}: column heading" /></th>`).join('');
 
   const rows = bandRows.map((b, i) => {
     const cells = lim.matrixCols.map((_, j) => {
-      const t = (lim.matrix[i] && lim.matrix[i][j]) ?? '—';
+      const t = (lim.matrix[i] && lim.matrix[i][j]) ?? 'n/a';
       const decline = /decline/i.test(t);
       const bg = decline ? '#FEF3F2' : `rgba(72,194,207,${0.05 + (lim.matrixCols.length - 1 - j) * 0.05})`;
       const fg = decline ? '#B42318' : '#101828';
@@ -822,7 +822,7 @@ function renderLimits() {
   }).join('');
 
   const fieldEditor = (f, listKey) => {
-    const name = `${f.label} — ${f.hint}`;
+    const name = `${f.label}: ${f.hint}`;
     if (f.type === 'select') {
       return `<select class="lim-select" data-change="lim-field" data-list="${listKey}" data-key="${esc(f.key)}"
         aria-label="${esc(name)}">
@@ -863,9 +863,9 @@ function renderLimits() {
       <div class="panel-sub">Two things decide the offer: how good the customer's score is, and how much of their income the repayment would eat up. Find the row, find the column, and the cell is the amount they get.</div>
 
       <ol class="howto">
-        <li><strong>Down the side</strong> — the customer's score band. Better score, bigger offer.</li>
-        <li><strong>Across the top</strong> — the repayment as a share of their monthly income. The further right, the more of their income it takes, so the offer shrinks.</li>
-        <li><strong>In each cell</strong> — the amount in US dollars. Type <code>Decline</code> instead of an amount to refuse that combination outright.</li>
+        <li><strong>Down the side</strong>: the customer's score band. Better score, bigger offer.</li>
+        <li><strong>Across the top</strong>: the repayment as a share of their monthly income. The further right, the more of their income it takes, so the offer shrinks.</li>
+        <li><strong>In each cell</strong>: the amount in US dollars. Type <code>Decline</code> instead of an amount to refuse that combination outright.</li>
       </ol>
       ${(() => {
         // Read a real cell so the example can never drift from the table.
@@ -979,7 +979,7 @@ function plural(n, word) {
 function deltaSummary() {
   const d = draftDelta();
   if (d.clean) {
-    return 'No changes against the published baseline yet — rules, score-band floors and the launch cap all match the live version, so no customer sees a different decision.';
+    return 'No changes against the published baseline yet. Rules, score-band floors and the launch cap all match the live version, so no customer sees a different decision.';
   }
   const parts = [];
   parts.push(`${plural(d.rulesChanged, 'rule')} changed`);
@@ -1058,7 +1058,7 @@ function renderSimulate() {
   });
   const fbOn = p.config.fallback.entries.filter(e => e.enabled).length;
   drivers.push({
-    title: fbOn ? `Fallback scorecard active — ${fbOn} signals` : 'Fallback scorecard not configured',
+    title: fbOn ? `Fallback scorecard active with ${fbOn} signals` : 'Fallback scorecard not configured',
     detail: fbOn
       ? `Customers the model cannot score are scored on points instead, then capped at the $${p.config.fallback.tiers.thinCeiling} thin-file ceiling.`
       : 'Customers the model cannot score have no route to an offer until signals are switched on.',
@@ -1074,7 +1074,7 @@ function renderSimulate() {
     ? `<div class="sim-runline is-running"><span class="sim-spinner" aria-hidden="true"></span> Running this draft against ${esc(r.pop.label)}…</div>`
     : state.simRun
       ? `<div class="sim-runline">Last run: <strong>${esc(state.simRun.at)}</strong> against <strong>${esc(state.simRun.population)}</strong></div>`
-      : `<div class="sim-runline">Not run yet. The figures below are already derived from this draft's score bands — running stamps them against a named population.</div>`;
+      : `<div class="sim-runline">Not run yet. The figures below are already derived from this draft's score bands; running stamps them against a named population.</div>`;
 
   return `
   <div class="page-head">
@@ -1093,11 +1093,11 @@ function renderSimulate() {
   ${runline}
 
   <div class="sim-stats">${stats}</div>
-  <div class="sim-derived" style="margin-bottom:16px;">Derived from this draft's score bands read against the last measured population and default rates, over ${esc(r.pop.label)} — the same figures the <span class="nav-link" data-tab="bands">Score bands</span> table shows. Band approval rate is the share of scored customers whose band decision is not Decline; eligibility gates and rule-level declines sit in front of it and are not modelled here. Book assumes ${Math.round(SIM_TAKE_UP * 100)}% take-up of accepted offers${r.launchMax > 0 ? `, capped at the ${money(r.launchMax)} launch maximum set in <span class="nav-link" data-tab="limits">Limits &amp; affordability</span>` : ''} — demand before the cap is ${money(r.demand)}.</div>
+  <div class="sim-derived" style="margin-bottom:16px;">Derived from this draft's score bands read against the last measured population and default rates, over ${esc(r.pop.label)}. These are the same figures the <span class="nav-link" data-tab="bands">Score bands</span> table shows. Band approval rate is the share of scored customers whose band decision is not Decline; eligibility gates and rule-level declines sit in front of it and are not modelled here. Book assumes ${Math.round(SIM_TAKE_UP * 100)}% take-up of accepted offers${r.launchMax > 0 ? `, capped at the ${money(r.launchMax)} launch maximum set in <span class="nav-link" data-tab="limits">Limits &amp; affordability</span>` : ''}. Demand before the cap is ${money(r.demand)}.</div>
 
   <div class="sim-grid">
     <div class="card panel">
-      <h2 class="panel-title">Band distribution — draft vs. last measured</h2>
+      <h2 class="panel-title">Band distribution: draft vs. last measured</h2>
       <div class="sim-chart">${bars}</div>
       <div class="sim-legend">
         <span><span class="legend-swatch" style="background:#C7D3E2;"></span>Last measured layout</span>
@@ -1105,7 +1105,7 @@ function renderSimulate() {
       </div>
 
       <div style="margin-top:20px;border-top:1px solid #F2F4F7;padding-top:14px;">
-        <h3 style="font-size:13px;font-weight:700;color:#101828;">Bad rate by band — draft vs. last measured</h3>
+        <h3 style="font-size:13px;font-weight:700;color:#101828;">Bad rate by band: draft vs. last measured</h3>
         <div style="font-size:11.5px;color:#667085;margin-top:2px;margin-bottom:8px;">Judge the rule change on risk, not just volume.</div>
         ${r.draft.rows.map((row, i) => {
           const live = r.live.rows[i] ? r.live.rows[i].badRate : null;
@@ -1158,11 +1158,11 @@ function renderDecisionExplanation() {
     const c = rcByCode(code);
     return `
     <div class="di-emit">
-      <span class="rule-code">${esc(code || '—')}</span>
+      <span class="rule-code">${esc(code || 'n/a')}</span>
       <div style="flex:1;min-width:0;">
         <div class="di-emit-label">${esc(c ? c.label : 'Code not found in the catalogue')}</div>
         <div class="di-emit-source">${source}</div>
-        ${c && c.consumer ? `<div class="di-emit-consumer">Consumer message: “${esc(c.consumer)}”</div>` : `<div class="di-emit-consumer di-none">No consumer message — administrator/agent only</div>`}
+        ${c && c.consumer ? `<div class="di-emit-consumer">Consumer message: “${esc(c.consumer)}”</div>` : `<div class="di-emit-consumer di-none">No consumer message. Administrator/agent only</div>`}
       </div>
       ${note ? `<span class="di-emit-note">${esc(note)}</span>` : ''}
     </div>`;
@@ -1175,21 +1175,21 @@ function renderDecisionExplanation() {
     <h3 class="di-group-label">Top contributing model factors</h3>
     ${sample.factors.map((code, i) => {
       const f = state.modelFactors.find(x => x.code === code);
-      return emitted(code, `Model factor${f ? ` · ${esc(labelOf(f.param))}` : ''} — mapped in Global setup`, `#${i + 1}`);
+      return emitted(code, `Model factor${f ? ` · ${esc(labelOf(f.param))}` : ''}, mapped in Global setup`, `#${i + 1}`);
     }).join('')}
     <h3 class="di-group-label" style="margin-top:14px;">Constraint that bound the limit</h3>
     ${bound
-      ? emitted(bound.rc, `Rule ${esc(bound.code)} fired — “${esc(sentence(bound))}”`, esc(sample.boundLabel))
-      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.boundRule)} is no longer in this profile — no code emitted.</div>`}`;
+      ? emitted(bound.rc, `Rule ${esc(bound.code)} fired: “${esc(sentence(bound))}”`, esc(sample.boundLabel))
+      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.boundRule)} is no longer in this profile, so no code is emitted.</div>`}`;
   } else {
     const fired = ruleByCode(sample.firedRule);
     body = `
     <h3 class="di-group-label">Rule that determined the outcome</h3>
     ${fired
-      ? emitted(fired.rc, `Rule ${esc(fired.code)} fired — “${esc(sentence(fired))}”`, sample.outcomeKind === 'decline' ? 'stopped here' : 'routed to review')
-      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.firedRule)} is no longer in this profile — no code emitted.</div>`}
+      ? emitted(fired.rc, `Rule ${esc(fired.code)} fired: “${esc(sentence(fired))}”`, sample.outcomeKind === 'decline' ? 'stopped here' : 'routed to review')
+      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.firedRule)} is no longer in this profile, so no code is emitted.</div>`}
     <h3 class="di-group-label" style="margin-top:14px;">Model factors</h3>
-    <div class="di-emit di-none" style="padding:12px 14px;">Not evaluated — the application stopped before scoring, so no factor codes are emitted.</div>`;
+    <div class="di-emit di-none" style="padding:12px 14px;">Not evaluated. The application stopped before scoring, so no factor codes are emitted.</div>`;
   }
 
   return `
@@ -1197,13 +1197,13 @@ function renderDecisionExplanation() {
     <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
       <div style="min-width:0;">
         <h2 class="panel-title">Decision explanation <span class="mode-pill" style="vertical-align:middle;margin-left:6px;">Read-only</span></h2>
-        <div class="panel-sub" style="max-width:660px;">The reason codes the engine would emit for a sample customer, resolved from the rules and model factors that actually fired. Nothing here is authored — change a rule's reason code in the Rules tab and this changes with it.</div>
+        <div class="panel-sub" style="max-width:660px;">The reason codes the engine would emit for a sample customer, resolved from the rules and model factors that actually fired. Nothing here is authored: change a rule's reason code in the Rules tab and this changes with it.</div>
       </div>
       <div class="di-tabs">
         ${SAMPLE_DECISIONS.map((s, i) => `
           <button class="di-tab${i === state.diSample ? ' active' : ''}" data-action="di-sample" data-idx="${i}"
             aria-pressed="${i === state.diSample ? 'true' : 'false'}"
-            aria-label="Show the decision explanation for ${esc(s.name)} — ${esc(s.outcome)}">${esc(s.name)}</button>`).join('')}
+            aria-label="Show the decision explanation for ${esc(s.name)}: ${esc(s.outcome)}">${esc(s.name)}</button>`).join('')}
       </div>
     </div>
 
@@ -1239,7 +1239,7 @@ function renderVersions() {
         <div class="version-summary">${esc(v.summary)}</div>
         <div class="version-meta">${esc(v.meta)}</div>
       </div>
-      <button class="version-action" style="color:${actionColor};" aria-label="${esc(v.action)} ${esc(v.version)} — ${esc(v.status)}">${esc(v.action)}</button>
+      <button class="version-action" style="color:${actionColor};" aria-label="${esc(v.action)} ${esc(v.version)}: ${esc(v.status)}">${esc(v.action)}</button>
     </div>`;
     }).join('');
 
@@ -1248,7 +1248,7 @@ function renderVersions() {
   <p class="page-desc" style="margin-bottom:20px;">Every published version of ${esc(activeProfile().name)} is kept. Rolling back restores that exact rule set. The audit log for all users lives in <span class="nav-link" data-nav="users">Global setup → Users &amp; audit</span>.</p>
 
   <div class="card list-card" style="max-width:720px;">
-    <h2 class="list-card-head">Version history — ${esc(activeProfile().name)}</h2>
+    <h2 class="list-card-head">Version history: ${esc(activeProfile().name)}</h2>
     ${versionRows}
   </div>`;
 }
@@ -1295,12 +1295,12 @@ function fbCompute() {
   const bandLimit = parseFloat(String(band.limit).replace(/[$,]/g, ''));
   const cap = tier === 'full' ? Number(t.thinCeiling) : Number(t.thinCeiling) / 2;
   let limit;
-  if (tier === 'zero') limit = `$${t.zeroMin} — flat cold-start minimum`;
+  if (tier === 'zero') limit = `$${t.zeroMin} (flat cold-start minimum)`;
   else if (band.decision === 'Decline' || isNaN(bandLimit)) limit = 'Decline at this score';
   else limit = `$${Math.min(bandLimit, cap)}${bandLimit > cap ? ` (band gives $${bandLimit}, capped)` : ''}`;
   const afford = incomeKnown
     ? `$${Math.round(income * 0.25)} / month instalment cap (25% of income)`
-    : '— · income unknown, zero-file minimum applies';
+    : 'n/a · income unknown, zero-file minimum applies';
   return { score, signals, tier, band, bandIdx, limit, afford, incomeKnown };
 }
 
@@ -1325,7 +1325,7 @@ function renderFallback() {
             const opts = paramsForSection('fallback').filter(d => d.group === g);
             return opts.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(opts.map(d => [d.key, d.label]), e.param)}</optgroup>` : '';
           }).join('')}
-          ${paramValidIn(e.param, 'fallback') ? '' : `<optgroup label="Not valid here"><option value="${esc(e.param)}" selected>${esc(labelOf(e.param))} — not valid here</option></optgroup>`}
+          ${paramValidIn(e.param, 'fallback') ? '' : `<optgroup label="Not valid here"><option value="${esc(e.param)}" selected>${esc(labelOf(e.param))} (not valid here)</option></optgroup>`}
         </select>
         <select class="fb-op" data-change="fb-op" data-entry="${e.id}" ${e.banded ? 'disabled' : ''}
           aria-label="Test for scorecard signal ${esc(sig)}">${optionGroup(FB_OPERATORS, e.op)}</select>
@@ -1355,7 +1355,7 @@ function renderFallback() {
     fullMin: 'Minimum signals for full fallback coverage',
     partialMin: 'Minimum signals for partial coverage',
     zeroMin: 'Zero-file flat cold-start minimum, in US dollars',
-    thinCeiling: 'Thin-file ceiling — hard cap on any fallback-scored offer, in US dollars',
+    thinCeiling: 'Thin-file ceiling: hard cap on any fallback-scored offer, in US dollars',
   };
   const numInput = (field, val, pre) => `
     <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
@@ -1375,10 +1375,10 @@ function renderFallback() {
 
   return `
   <h1 class="page-title">Fallback scorecard</h1>
-  <p class="page-desc" style="max-width:760px;">Some customers are too new to score — the model has nothing to work with. Rather than turn them away, this scorecard gives points for whatever they <em>can</em> show, adds the points up, and treats the total as a score.</p>
+  <p class="page-desc" style="max-width:760px;">Some customers are too new to score, because the model has nothing to work with. Rather than turn them away, this scorecard gives points for whatever they <em>can</em> show, adds the points up, and treats the total as a score.</p>
   <ol class="howto" style="max-width:760px;margin-bottom:18px;">
-    <li><strong>Points for what they have</strong> — verified ID, months on the wallet, steady income. Set each signal's worth in the table below.</li>
-    <li><strong>The total is the score</strong>, on the same 0–1000 scale as the model, so it flows through the same <span class="nav-link" data-tab="bands">Score bands</span> — but capped, because a points total is a rougher guess than a model score.</li>
+    <li><strong>Points for what they have</strong>: verified ID, months on the wallet, steady income. Set each signal's worth in the table below.</li>
+    <li><strong>The total is the score</strong>, on the same 0–1000 scale as the model, so it flows through the same <span class="nav-link" data-tab="bands">Score bands</span>: but capped, because a points total is a rougher guess than a model score.</li>
     <li><strong>How much data is enough</strong> is set by the coverage tiers. Too little, and the customer gets a small flat starting amount instead of a scored offer.</li>
     <li><strong>Every fallback decision is labelled</strong> as rule-based, so you can always tell these apart from model-scored ones.</li>
   </ol>
@@ -1408,21 +1408,21 @@ function renderFallback() {
       <div class="card panel">
         <h2 class="panel-title">Coverage tiers</h2>
         <div class="panel-sub" style="margin-bottom:6px;">How much data is enough to trust the scorecard.</div>
-        ${tierRow('Full fallback', 'Enough signals present — score normally, capped at the thin-file ceiling.', numInput('fullMin', t.fullMin, 'at least&nbsp;signals:'))}
-        ${tierRow('Partial coverage', 'Fewer signals — offer capped at 50% of the thin-file ceiling ($' + (Number(t.thinCeiling) / 2) + ').', numInput('partialMin', t.partialMin, 'at least&nbsp;signals:'))}
-        ${tierRow('Zero-file', 'Too little data — in particular no inferable income. Skip scoring, assign a flat cold-start minimum.', numInput('zeroMin', t.zeroMin, '$'))}
+        ${tierRow('Full fallback', 'Enough signals present: score normally, capped at the thin-file ceiling.', numInput('fullMin', t.fullMin, 'at least&nbsp;signals:'))}
+        ${tierRow('Partial coverage', 'Fewer signals: offer capped at 50% of the thin-file ceiling ($' + (Number(t.thinCeiling) / 2) + ').', numInput('partialMin', t.partialMin, 'at least&nbsp;signals:'))}
+        ${tierRow('Zero-file', 'Too little data, in particular no inferable income. Skip scoring, assign a flat cold-start minimum.', numInput('zeroMin', t.zeroMin, '$'))}
         ${tierRow('Thin-file ceiling', 'Hard cap on any fallback-scored offer.', numInput('thinCeiling', t.thinCeiling, '$'))}
       </div>
 
       <div class="card panel">
-        <h2 class="panel-title">Live preview — sample customer</h2>
+        <h2 class="panel-title">Live preview: sample customer</h2>
         <div class="panel-sub" style="margin-bottom:8px;">Tick the signals this customer has.</div>
         ${previewChecks}
         <div style="display:flex;align-items:center;gap:8px;margin:10px 0 14px 0;">
           <span style="font-size:12.5px;color:#344054;font-weight:600;">Inferred monthly income</span>
           <span style="font-size:12.5px;color:#667085;">$</span>
-          <input class="fb-tier-input" style="width:70px;" value="${esc(pv.income)}" data-change="fb-income" placeholder="—"
-            aria-label="Sample customer's inferred monthly income in US dollars — leave blank for unknown" />
+          <input class="fb-tier-input" style="width:70px;" value="${esc(pv.income)}" data-change="fb-income" placeholder="n/a"
+            aria-label="Sample customer's inferred monthly income in US dollars: leave blank for unknown" />
           <span style="font-size:11.5px;color:#667085;">blank = unknown</span>
         </div>
         <div style="border-top:1px solid #F2F4F7;padding-top:12px;">
@@ -1434,7 +1434,7 @@ function renderFallback() {
           <div class="fb-result-row"><span>Coverage tier</span><strong>${tierLabel} · ${r.signals} signal${r.signals === 1 ? '' : 's'}</strong></div>
           <div class="fb-result-row"><span>Recommended limit</span><strong>${esc(r.limit)}</strong></div>
           <div class="fb-result-row"><span>Affordability ceiling</span><strong>${esc(r.afford)}</strong></div>
-          <div class="fb-result-row"><span>Probability of default</span><strong>— <span style="font-weight:500;color:#667085;">points scorecard, not a calibrated probability</span></strong></div>
+          <div class="fb-result-row"><span>Probability of default</span><strong>n/a <span style="font-weight:500;color:#667085;">points scorecard, not a calibrated probability</span></strong></div>
         </div>
       </div>
     </div>
@@ -1473,7 +1473,7 @@ function stepState(key) {
       const lim = syncMatrix(c);
       const caps = lim.caps;
       const zero = caps.filter(f => !Number(f.value)).length;
-      const blanks = lim.matrix.flat().filter(v => !v || v === '—').length;
+      const blanks = lim.matrix.flat().filter(v => !v || v === 'n/a').length;
       if (zero === caps.length) return { state: 'todo', note: 'No caps set' };
       if (zero || blanks) return { state: 'partial', note: zero ? `${zero} cap${zero === 1 ? '' : 's'} unset` : 'Matrix incomplete' };
       return { state: 'done', note: 'Caps & matrix set' };
@@ -1502,7 +1502,7 @@ function setupSteps() {
   return SETUP_STEPS.map((s, i) => ({ ...s, num: i + 1, ...stepState(s.key) }));
 }
 
-// The steps ARE the tabs, so there is no second list of the same destinations —
+// The steps ARE the tabs, so there is no second list of the same destinations,
 // only a one-line count of how far the set-up has got.
 function renderSetupSummary() {
   const steps = setupSteps();
@@ -1558,8 +1558,8 @@ function renderProfileWorkspace() {
         ? '<span class="tab-status is-partial" aria-hidden="true"></span>'
         : '';
     const name = s
-      ? `Step ${s.num} of ${steps.length}: ${label} — ${s.note}`
-      : `${label} — published version history`;
+      ? `Step ${s.num} of ${steps.length}: ${label}. ${s.note}`
+      : `${label}, published version history`;
     return `
     <button class="tab${active ? ' active' : ''}${s && s.state === 'done' ? ' is-done' : ''}"
       role="tab" id="tab-${key}" aria-controls="tabpanel" aria-selected="${active ? 'true' : 'false'}"
@@ -1575,7 +1575,7 @@ function renderProfileWorkspace() {
   const blockers = publishBlockers();
   const nag = state.setupNag && blockers.length ? `
     <div class="blast-note" style="margin:0 0 16px 0;">
-      Not ready to publish yet — finish ${blockers.map(b => `<strong>${esc(b)}</strong>`).join(', ')} first.
+      Not ready to publish yet. Finish ${blockers.map(b => `<strong>${esc(b)}</strong>`).join(', ')} first.
       A checker cannot approve a profile with an unconfigured step.
     </div>` : '';
 
@@ -1583,7 +1583,7 @@ function renderProfileWorkspace() {
   // the banner only appears the first time this profile is opened.
   const banner = state.mode === 'view' && state.showBanner ? `
     <div class="view-banner">
-      <span>Viewing <strong>${esc(p.name)} ${esc(p.version)}</strong> — read-only. Nothing here can be changed until you switch to editing.</span>
+      <span>Viewing <strong>${esc(p.name)} ${esc(p.version)}</strong>: read-only. Nothing here can be changed until you switch to editing.</span>
       <button class="btn btn-primary btn-sm" data-action="enter-edit" style="font-weight:600;">Edit this profile</button>
     </div>` : '';
 
@@ -1613,7 +1613,7 @@ function renderProfileWorkspace() {
 /* ---------- Global setup screens ---------- */
 
 function globalBadge() {
-  return `<div class="global-note">Global setup — shared by every product. Change once, applies everywhere. Not versioned per profile.</div>`;
+  return `<div class="global-note">Global setup: shared by every product. Change once, applies everywhere. Not versioned per profile.</div>`;
 }
 
 // Global setup screens get the same back affordance the profile workspace has.
@@ -1659,9 +1659,9 @@ function renderModel() {
       <h2 class="panel-title">Score range</h2>
       <div class="panel-sub">Every profile's band ruler is positioned on this range.</div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:16px;">
-        <input class="score-input" value="${s.scoreMin}" data-change="score-min" aria-label="Shared model score range — minimum score" />
+        <input class="score-input" value="${s.scoreMin}" data-change="score-min" aria-label="Shared model score range: minimum score" />
         <span style="color:#667085;font-size:12.5px;" aria-hidden="true">to</span>
-        <input class="score-input" value="${s.scoreMax}" data-change="score-max" aria-label="Shared model score range — maximum score" />
+        <input class="score-input" value="${s.scoreMax}" data-change="score-max" aria-label="Shared model score range: maximum score" />
       </div>
       <div style="margin-top:14px;font-size:12.5px;color:#667085;line-height:1.55;text-wrap:pretty;">Changing the range rescales the score-band ruler in every profile. Band floors keep their absolute values; review each profile's <span class="nav-link" data-nav="bands">score bands</span> after a change.</div>
     </div>
@@ -1715,7 +1715,7 @@ function renderModelHealth() {
         <div class="field-label">${label}</div>
         <div class="field-hint">${esc(mh.metricHints[key])}</div>
       </div>
-      <div class="field-value" style="${vals ? '' : 'color:#5D6B82;background:#F2F4F7;border-color:#E4E7EC;'}">${vals ? esc(vals[key]) : '—'}</div>
+      <div class="field-value" style="${vals ? '' : 'color:#5D6B82;background:#F2F4F7;border-color:#E4E7EC;'}">${vals ? esc(vals[key]) : 'n/a'}</div>
     </div>`).join('');
 
   const psiRows = mh.psi.map(p => {
@@ -1743,10 +1743,10 @@ function renderModelHealth() {
   return `
   ${globalCrumbs()}
   <h1 class="page-title">Model health</h1>
-  <p class="page-desc" style="margin-bottom:20px;">Quality metrics for the shared scoring model. Read-only for policy users — retraining and recalibration belong to Data Science.</p>
+  <p class="page-desc" style="margin-bottom:20px;">Quality metrics for the shared scoring model. Read-only for policy users; retraining and recalibration belong to Data Science.</p>
   ${globalBadge()}
 
-  ${liveReady ? '' : `<div class="blast-note" style="margin:0 0 16px 0;max-width:1000px;">Validation only — live metrics available after go-live and first device outcomes. Targets to be confirmed after first training run.</div>`}
+  ${liveReady ? '' : `<div class="blast-note" style="margin:0 0 16px 0;max-width:1000px;">Validation only. Live metrics available after go-live and first device outcomes. Targets to be confirmed after first training run.</div>`}
 
   <div class="card panel" style="max-width:1000px;margin-bottom:16px;display:flex;gap:26px;flex-wrap:wrap;align-items:center;">
     <div><div class="field-hint">Model</div><div style="font-size:14px;font-weight:700;color:#101828;margin-top:2px;">${esc(mh.version)}</div></div>
@@ -1790,7 +1790,7 @@ function renderModelHealth() {
     </div>
     <div class="card panel">
       <h2 class="panel-title">Bad rate by score band</h2>
-      <div class="panel-sub" style="margin-bottom:10px;">Default rate rises as the score falls — rank ordering holds across every band.</div>
+      <div class="panel-sub" style="margin-bottom:10px;">Default rate rises as the score falls, so rank ordering holds across every band.</div>
       <div class="badband-chart">${badBars}</div>
     </div>
   </div>`;
@@ -1838,10 +1838,10 @@ function renderParams() {
   return `
   ${globalCrumbs()}
   <h1 class="page-title">Parameters &amp; features</h1>
-  <p class="page-desc" style="max-width:860px;">This is the vocabulary every product's rules are written in — each customer detail the engine can look at, named once, here. Rename one and every rule sentence that uses it updates everywhere at once.</p>
+  <p class="page-desc" style="max-width:860px;">This is the vocabulary every product's rules are written in: each customer detail the engine can look at, named once, here. Rename one and every rule sentence that uses it updates everywhere at once.</p>
   <ol class="howto" style="max-width:860px;margin-bottom:18px;">
     <li><strong>The name</strong> is what appears in rule sentences. Change it here, never in a rule.</li>
-    <li><strong>The type</strong> decides what a rule can do with it — money gets a currency box, a category gets a list to pick from, and so on. Set on creation.</li>
+    <li><strong>The type</strong> decides what a rule can do with it. Money gets a currency box, a category gets a list to pick from, and so on. Set on creation.</li>
     <li><strong>Applicable sections</strong> is the important one: tick where this detail is allowed to be used. A rule only offers the details ticked for its own section, which is what stops an eligibility check reading today's approval count. Tick several and it appears in each of those lists.</li>
   </ol>
   ${globalBadge()}
@@ -1892,19 +1892,19 @@ function renderReasonCodes() {
       <span class="rule-code rc-code">${esc(rc.code)}</span>
       <div class="rc-fields">
         <label class="rc-field">
-          <span class="rc-field-label">Internal label — administrator &amp; agent</span>
+          <span class="rc-field-label">Internal label for administrator &amp; agent</span>
           <input value="${esc(rc.label)}" data-change="rc-label" data-code="${esc(rc.code)}"
-            aria-label="Internal label for reason code ${esc(rc.code)} — administrator and agent" />
+            aria-label="Internal label for reason code ${esc(rc.code)}: administrator and agent" />
         </label>
         <label class="rc-field">
-          <span class="rc-field-label">Consumer message — optional</span>
-          <input value="${esc(rc.consumer)}" placeholder="Leave blank — never shown to the customer" data-change="rc-consumer" data-code="${esc(rc.code)}"
-            aria-label="Consumer message for reason code ${esc(rc.code)} — optional" />
+          <span class="rc-field-label">Consumer message (optional)</span>
+          <input value="${esc(rc.consumer)}" placeholder="Leave blank so it is never shown to the customer" data-change="rc-consumer" data-code="${esc(rc.code)}"
+            aria-label="Consumer message for reason code ${esc(rc.code)}: optional" />
         </label>
         <div class="rc-usage">${usage}</div>
       </div>
       <button class="version-action rc-toggle" data-action="rc-toggle" data-code="${esc(rc.code)}"
-        aria-label="${rc.active ? 'Deactivate' : 'Reactivate'} reason code ${esc(rc.code)} — ${esc(rc.label)}">${rc.active ? 'Deactivate' : 'Reactivate'}</button>
+        aria-label="${rc.active ? 'Deactivate' : 'Reactivate'} reason code ${esc(rc.code)}: ${esc(rc.label)}">${rc.active ? 'Deactivate' : 'Reactivate'}</button>
     </div>`;
   };
 
@@ -1931,7 +1931,7 @@ function renderReasonCodes() {
   ${globalBadge()}
 
   <div class="blast-note" style="margin:0 0 16px 0;max-width:1000px;background:#F8FAFC;border-color:#E4E7EC;color:#344054;">
-    This catalogue holds wording only — it does not decide anything. A code is attached to a rule in that profile's <span class="nav-link" data-tab="rules">Rules</span> tab, or to a model factor below, and the engine emits it when that rule or factor determines the outcome.
+    This catalogue holds wording only. It does not decide anything. A code is attached to a rule in that profile's <span class="nav-link" data-tab="rules">Rules</span> tab, or to a model factor below, and the engine emits it when that rule or factor determines the outcome.
   </div>
 
   <div class="card list-card" style="max-width:1000px;margin-bottom:16px;">
@@ -1970,7 +1970,7 @@ function renderUsers() {
           <span class="version-name">${esc(u.name)}</span>
           ${roleChip(u.role)}
         </div>
-        <div class="version-summary">${esc(u.team)} — ${esc(u.detail)}</div>
+        <div class="version-summary">${esc(u.team)}. ${esc(u.detail)}</div>
       </div>
     </div>`).join('');
 
@@ -1983,7 +1983,7 @@ function renderUsers() {
   return `
   ${globalCrumbs()}
   <h1 class="page-title">Users &amp; audit</h1>
-  <p class="page-desc" style="margin-bottom:20px;">Maker–checker roles apply across every product. The audit log records every change in every profile and in global setup.</p>
+  <p class="page-desc" style="margin-bottom:20px;">Maker-checker roles apply across every product. The audit log records every change in every profile and in global setup.</p>
   ${globalBadge()}
 
   <div class="versions-grid">
@@ -1992,7 +1992,7 @@ function renderUsers() {
       ${userRows}
     </div>
     <div class="card list-card">
-      <h2 class="list-card-head">Audit log — all products</h2>
+      <h2 class="list-card-head">Audit log, all products</h2>
       ${auditRows}
     </div>
   </div>`;
@@ -2032,7 +2032,7 @@ function renderCreateModal() {
         </label>
         <label>Start from
           <select id="npBase" aria-label="Profile to start from">
-            <option value=""${dup ? '' : ' selected'}>Blank profile — no rules yet</option>
+            <option value=""${dup ? '' : ' selected'}>Blank profile with no rules yet</option>
             ${baseOptions}
           </select>
         </label>
@@ -2098,15 +2098,15 @@ function renderModal() {
   <div class="modal-overlay" data-action="close-publish-overlay">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <div class="modal-head">
-        <h2 class="modal-title" id="modalTitle">Send ${esc(p.name)} ${esc(p.version === '—' ? 'v0.1' : p.version)} for approval</h2>
-        <div class="modal-sub">Maker–checker: a second approver must sign off before this goes live.</div>
+        <h2 class="modal-title" id="modalTitle">Send ${esc(p.name)} ${esc(p.version === 'n/a' ? 'v0.1' : p.version)} for approval</h2>
+        <div class="modal-sub">Maker-checker: a second approver must sign off before this goes live.</div>
       </div>
       <div class="modal-body">
         <div class="modal-summary">${esc(deltaSummary())}</div>
         <label>Approver
-          <select aria-label="Approver — the checker who must sign this off">
-            <option>R. Chikanda — Head of Credit</option>
-            <option>N. Dube — Risk Governance</option>
+          <select aria-label="Approver: the checker who must sign this off">
+            <option>R. Chikanda, Head of Credit</option>
+            <option>N. Dube, Risk Governance</option>
           </select>
         </label>
         <label>Effective date
@@ -2158,7 +2158,7 @@ function openProfile(idx, mode, tab) {
   render();
 }
 
-// "Now on step 3 of 7, Fallback scorecard" — spoken, not just shown.
+// "Now on step 3 of 7, Fallback scorecard": spoken, not just shown.
 function announceStep(key) {
   const steps = setupSteps();
   const s = steps.find(x => x.key === key);
@@ -2338,7 +2338,7 @@ document.addEventListener('click', (e) => {
           announce(`Not ready to publish. Finish ${blockers.join(', ')} first.`);
         } else {
           openDialog(() => { state.publishOpen = true; });
-          announce('Publish dialog opened — send this draft to a checker for approval.');
+          announce('Publish dialog opened. Send this draft to a checker for approval.');
         }
       } else {
         goToTab(step);
@@ -2462,7 +2462,7 @@ document.addEventListener('click', (e) => {
       const copy = structuredClone(src);
       state.profiles.push({
         ...copy,
-        // The copy is its own baseline — it has not diverged from anything yet.
+        // The copy is its own baseline; it has not diverged from anything yet.
         liveBands: structuredClone(copy.config.bands),
         liveRules: structuredClone(copy.config.rules),
         liveLimits: structuredClone(copy.config.limits),
@@ -2505,7 +2505,7 @@ document.addEventListener('change', (e) => {
           const { num } = splitValue(r.value);
           r.value = joinValue('', num || '0', d && d.unit ? d.unit : '');
         }
-        // The old upper bound carried the old parameter's unit — re-derive it.
+        // The old upper bound carried the old parameter's unit, so re-derive it.
         r.value2 = '';
         if (r.op === 'between') r.value2 = upperValue(r);
         markDirty();

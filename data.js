@@ -1,4 +1,4 @@
-// Sasai Credit — Rule Engine Console: static configuration data
+// Sasai Credit, Rule Engine Console: static configuration data
 
 const NAVY = '#144989';
 const DARK = '#172E7B';
@@ -25,7 +25,7 @@ const SECTION_TAG_LABEL = Object.fromEntries(SECTION_TAGS);
 // ONE global definition per parameter. `sections` tags where it may be used;
 // `type` drives which operators and which value editor the rule row offers.
 const PARAM_DEFS = [
-  // Customer input signals — read directly from the wallet and KYC record
+  // Customer input signals: read directly from the wallet and KYC record
   { key: 'age', label: 'Customer age', group: 'input', type: 'duration', unit: 'years', sections: ['gates', 'coverage', 'fallback'] },
   { key: 'tenure', label: 'Wallet tenure', group: 'input', type: 'duration', unit: 'months', sections: ['gates', 'coverage', 'fallback', 'thin', 'ladder'] },
   { key: 'kyc', label: 'KYC status', group: 'input', type: 'category', values: ['Fully verified (Tier 2)', 'SIM-registered (Tier 1)', 'Unverified'], sections: ['gates', 'coverage', 'fallback'] },
@@ -36,7 +36,7 @@ const PARAM_DEFS = [
   { key: 'device', label: 'Device type on file', group: 'input', type: 'category', values: ['Smartphone', 'Feature phone', 'Unknown'], sections: ['gates', 'coverage', 'fallback'] },
   { key: 'sim', label: 'SIM tenure', group: 'input', type: 'duration', unit: 'days', sections: ['gates', 'coverage', 'fallback', 'fraud'] },
 
-  // Inferred customer signals — derived by the feature pipeline
+  // Inferred customer signals: derived by the feature pipeline
   { key: 'income', label: 'Inferred monthly income', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
   { key: 'inflow', label: 'Average monthly inflow', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
   { key: 'outflow', label: 'Average monthly outflow', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits'] },
@@ -51,19 +51,19 @@ const PARAM_DEFS = [
   { key: 'activeDays', label: 'Active-days ratio (90 days)', group: 'inferred', type: 'ratio', unit: 'ratio', sections: ['coverage', 'fallback', 'thin'] },
   { key: 'recharge', label: 'Recharge regularity', group: 'inferred', type: 'category', values: ['steady weekly top-ups', 'irregular top-ups', 'no recent top-ups'], sections: ['coverage', 'fallback', 'thin'] },
 
-  // Model outputs — produced by the shared scoring model
+  // Model outputs: produced by the shared scoring model
   { key: 'score', label: 'Model score', group: 'model', type: 'points', unit: 'points', sections: ['bands', 'coverage', 'limits', 'thin', 'ladder'] },
   { key: 'pd', label: 'Probability of default', group: 'model', type: 'percent', sections: ['bands', 'coverage', 'limits'] },
   { key: 'confidence', label: 'Model confidence (coverage)', group: 'model', type: 'ratio', unit: 'index', sections: ['bands', 'coverage', 'thin'] },
 
-  // Aggregate / system signals — portfolio and operational counters.
+  // Aggregate / system signals: portfolio and operational counters.
   // Deliberately NEVER valid in eligibility or affordability.
   { key: 'dailyApprovals', label: 'Approvals so far today', group: 'system', type: 'count', unit: 'approvals', sections: ['blast', 'pilot'] },
   { key: 'dailyDisbursed', label: 'Value disbursed so far today', group: 'system', type: 'currency', sections: ['blast', 'pilot'] },
   { key: 'popAffected', label: 'Population affected by this draft', group: 'system', type: 'percent', sections: ['blast'] },
   // Portfolio-level exposure totals are themselves a concentration measure.
   { key: 'pilotExposure', label: 'Total pilot exposure', group: 'system', type: 'currency', sections: ['blast', 'pilot', 'exposure'] },
-  { key: 'pilotCell', label: 'Pilot cell', group: 'system', type: 'category', values: ['Harare', 'Bulawayo', 'Mutare', 'Gweru', 'All cells — national'], sections: ['pilot'] },
+  { key: 'pilotCell', label: 'Pilot cell', group: 'system', type: 'category', values: ['Harare', 'Bulawayo', 'Mutare', 'Gweru', 'All cells nationwide'], sections: ['pilot'] },
   { key: 'blocklist', label: 'Fraud blocklist match', group: 'system', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['fraud'] },
   // Device sharing is both a fraud signal and a concentration signal.
   { key: 'cluster', label: 'Wallets sharing this device (30 days)', group: 'system', type: 'count', unit: 'wallets', sections: ['fraud', 'blast', 'exposure'] },
@@ -77,7 +77,7 @@ const OPERATORS = [
   ['eq', 'equals'],
   ['notin', 'not in list'],
 ];
-// Operators offered per parameter type — list membership only for categoricals,
+// Operators offered per parameter type. List membership only for categoricals,
 // range comparisons only for numerics. Equality suits both.
 const TYPE_OPERATORS = {
   currency: ['gte', 'lte', 'between', 'eq'],
@@ -97,7 +97,7 @@ const ACTIONS = [
   ['capAfford', 'Cap limit at affordability ceiling'],
   ['reduce', 'Reduce limit by 30%'],
   ['ladder', 'Unlock next ladder step'],
-  ['hold', 'Hold — retry in 30 days'],
+  ['hold', 'Hold, retry in 30 days'],
   ['throttle', 'Throttle approvals for the day'],
 ];
 // Actions offered per rule section. Eligibility gates decide only whether the
@@ -212,7 +212,7 @@ const PARAM_GROUPS = [
   ['input', 'Customer input signals', 'Read directly from the wallet and KYC record'],
   ['inferred', 'Inferred customer signals', 'Derived by the feature pipeline from transaction history'],
   ['model', 'Model outputs', 'Produced by the shared scoring model'],
-  ['system', 'Aggregate / system signals', 'Portfolio and operational counters — never eligibility or affordability'],
+  ['system', 'Aggregate / system signals', 'Portfolio and operational counters. Never eligibility or affordability'],
 ];
 
 const FRAUD_LISTS = [
@@ -222,7 +222,7 @@ const FRAUD_LISTS = [
   { name: 'Agent watchlist', effect: 'Refer', detail: 'Agents with abnormal application clustering. Applications they assist are referred.', meta: '86 agents · reviewed weekly', rules: 'Not yet referenced by a rule' },
 ];
 
-// Reason-code catalogue — WORDING ONLY. It decides nothing; the engine emits a
+// Reason-code catalogue: WORDING ONLY. It decides nothing; the engine emits a
 // code when a rule fires or a model factor contributes. kind: 'rule' | 'factor'.
 // label = short internal wording for the admin/agent. consumer = optional
 // customer-facing wording, used only if a reason is ever shown to the customer.
@@ -230,11 +230,11 @@ const REASON_CODES = [
   { code: 'RC-101', kind: 'rule', label: 'Age outside the eligible range', consumer: 'You are not eligible for this offer at the moment', active: true },
   { code: 'RC-102', kind: 'rule', label: 'KYC verification incomplete', consumer: 'Please complete your account verification to qualify', active: true },
   { code: 'RC-103', kind: 'rule', label: 'Wallet status not eligible', consumer: '', active: true },
-  { code: 'RC-104', kind: 'rule', label: 'Wallet tenure below minimum', consumer: 'Your account is still new — try again once it is a little older', active: true },
+  { code: 'RC-104', kind: 'rule', label: 'Wallet tenure below minimum', consumer: 'Your account is still new. Please try again once it is a little older', active: true },
   { code: 'RC-114', kind: 'rule', label: 'Credit score below product floor', consumer: 'Credit score below the threshold for this offer', active: true },
-  { code: 'RC-207', kind: 'rule', label: 'Affordability cap binding — repayment too high', consumer: 'Monthly repayment too high for your income', active: true },
+  { code: 'RC-207', kind: 'rule', label: 'Affordability cap binding: repayment too high', consumer: 'Monthly repayment too high for your income', active: true },
   { code: 'RC-208', kind: 'rule', label: 'Inferred income below product minimum', consumer: '', active: true },
-  { code: 'RC-301', kind: 'rule', label: 'Insufficient transaction history (thin file)', consumer: 'Not enough account history yet — try again in 30 days', active: true },
+  { code: 'RC-301', kind: 'rule', label: 'Insufficient transaction history (thin file)', consumer: 'Not enough account history yet. Please try again in 30 days', active: true },
   { code: 'RC-302', kind: 'rule', label: 'Cashflow too irregular to score', consumer: '', active: true },
   { code: 'RC-303', kind: 'rule', label: 'Monthly inflow below minimum', consumer: '', active: true },
   { code: 'RC-304', kind: 'rule', label: 'Wallet balance buffer too low', consumer: '', active: true },
@@ -243,10 +243,10 @@ const REASON_CODES = [
   { code: 'RC-403', kind: 'rule', label: 'Device shared by several wallets', consumer: '', active: true },
   { code: 'RC-501', kind: 'rule', label: 'Fraud blocklist match', consumer: 'We cannot offer credit on this account', active: true },
   { code: 'RC-502', kind: 'rule', label: 'Recent SIM change inside tenure window', consumer: '', active: true },
-  { code: 'RC-601', kind: 'rule', label: 'Daily lending capacity reached — throttled', consumer: 'We are unable to process new offers right now, please try tomorrow', active: true },
+  { code: 'RC-601', kind: 'rule', label: 'Daily lending capacity reached: throttled', consumer: 'We are unable to process new offers right now, please try tomorrow', active: true },
   { code: 'RC-602', kind: 'rule', label: 'Held for checker review (blast radius)', consumer: '', active: true },
   { code: 'RC-603', kind: 'rule', label: 'Pilot exposure cap reached', consumer: '', active: true },
-  { code: 'RC-701', kind: 'rule', label: 'Ladder step unlocked (informational)', consumer: 'Good news — your limit has increased', active: true },
+  { code: 'RC-701', kind: 'rule', label: 'Ladder step unlocked (informational)', consumer: 'Good news, your limit has increased', active: true },
   { code: 'RC-902', kind: 'rule', label: 'Legacy manual decline (retired)', consumer: '', active: false },
   { code: 'RC-801', kind: 'factor', label: 'Cashflow consistency', consumer: 'How steady your money in and out is', active: true },
   { code: 'RC-802', kind: 'factor', label: 'Length of wallet history', consumer: 'How long you have used the wallet', active: true },
@@ -271,7 +271,7 @@ const USERS = [
   { initials: 'KA', name: 'K. Achebe', team: 'Data Science', role: 'Viewer', detail: 'Read-only access to rules and simulations.' },
 ];
 
-// Airtime Advance: small instant top-up credit — its own rule set and bands.
+// Airtime Advance: small instant top-up credit, with its own rule set and bands.
 const AA_RULES = [
   ['gates', 'age', 'gte', '18 years', 'pass', true, 'E-01', 'RC-101'],
   ['gates', 'kyc', 'eq', 'SIM-registered (Tier 1)', 'pass', true, 'E-02', 'RC-102'],
@@ -290,32 +290,32 @@ const AA_RULES = [
   ['blast', 'dailyDisbursed', 'gte', '$20,000', 'throttle', true, 'B-02', 'RC-601'],
   ['fraud', 'blocklist', 'eq', 'No match', 'pass', true, 'F-01', 'RC-501'],
   ['fraud', 'sim', 'lte', '30 days', 'decline', true, 'F-02', 'RC-502'],
-  ['pilot', 'pilotCell', 'in', 'All cells — national', 'pass', true, 'P-01', 'RC-402'],
+  ['pilot', 'pilotCell', 'in', 'All cells nationwide', 'pass', true, 'P-01', 'RC-402'],
 ];
 
 const DF_BANDS = [
-  { label: 'Below floor', floor: 0, decision: 'Decline', limit: '—', pop: 11, badRate: 24.8 },
+  { label: 'Below floor', floor: 0, decision: 'Decline', limit: 'n/a', pop: 11, badRate: 24.8 },
   { label: 'Thin-file', floor: 100, decision: 'Approve at thin-file cap', limit: '$80', pop: 23, badRate: 14.5 },
   { label: 'Conservative', floor: 300, decision: 'Approve, affordability capped', limit: '$180', pop: 31, badRate: 8.7 },
   { label: 'Standard', floor: 500, decision: 'Approve', limit: '$350', pop: 26, badRate: 4.2 },
   { label: 'Prime', floor: 750, decision: 'Approve, ladder eligible', limit: '$600', pop: 9, badRate: 1.9 },
 ];
 const AA_BANDS = [
-  { label: 'Below floor', floor: 0, decision: 'Decline', limit: '—', pop: 14, badRate: 28.4 },
+  { label: 'Below floor', floor: 0, decision: 'Decline', limit: 'n/a', pop: 14, badRate: 28.4 },
   { label: 'Starter', floor: 80, decision: 'Approve at starter cap', limit: '$2', pop: 30, badRate: 12.1 },
   { label: 'Regular', floor: 300, decision: 'Approve', limit: '$6', pop: 34, badRate: 6.8 },
   { label: 'Plus', floor: 550, decision: 'Approve', limit: '$10', pop: 16, badRate: 3.9 },
   { label: 'Max', floor: 800, decision: 'Approve, ladder eligible', limit: '$15', pop: 6, badRate: 2.1 },
 ];
 const EMPTY_BANDS = [
-  { label: 'Below floor', floor: 0, decision: 'Not configured', limit: '—', pop: 0, badRate: null },
-  { label: 'Band 2', floor: 100, decision: 'Not configured', limit: '—', pop: 0, badRate: null },
-  { label: 'Band 3', floor: 300, decision: 'Not configured', limit: '—', pop: 0, badRate: null },
-  { label: 'Band 4', floor: 500, decision: 'Not configured', limit: '—', pop: 0, badRate: null },
-  { label: 'Band 5', floor: 750, decision: 'Not configured', limit: '—', pop: 0, badRate: null },
+  { label: 'Below floor', floor: 0, decision: 'Not configured', limit: 'n/a', pop: 0, badRate: null },
+  { label: 'Band 2', floor: 100, decision: 'Not configured', limit: 'n/a', pop: 0, badRate: null },
+  { label: 'Band 3', floor: 300, decision: 'Not configured', limit: 'n/a', pop: 0, badRate: null },
+  { label: 'Band 4', floor: 500, decision: 'Not configured', limit: 'n/a', pop: 0, badRate: null },
+  { label: 'Band 5', floor: 750, decision: 'Not configured', limit: 'n/a', pop: 0, badRate: null },
 ];
 
-// Model health (Global setup) — read-only quality metrics for the shared model.
+// Model health (Global setup): read-only quality metrics for the shared model.
 // live: null = no device outcomes yet; the screen shows the validation-only banner.
 const MODEL_HEALTH = {
   version: 'DF-Score v3',
@@ -362,11 +362,11 @@ const SAMPLE_DECISIONS = [
     id: 'sd1', name: 'Applicant A', summary: '24 · wallet 4 months · score not computed',
     outcome: 'Decline', outcomeKind: 'decline',
     firedRule: 'E-05',
-    detail: 'Wallet tenure is 4 months, below the 6-month eligibility gate. Evaluation stopped at the first failing gate — no later rule ran and the model was never called.',
+    detail: 'Wallet tenure is 4 months, below the 6-month eligibility gate. Evaluation stopped at the first failing gate, so no later rule ran and the model was never called.',
   },
   {
     id: 'sd2', name: 'Applicant B', summary: '31 · wallet 14 months · score 305 · 3 months history',
-    outcome: 'Approve — thin-file cap', outcomeKind: 'approve',
+    outcome: 'Approve at thin-file cap', outcomeKind: 'approve',
     factors: ['RC-802', 'RC-801', 'RC-803'],
     boundRule: 'T-01', boundLabel: 'capped by thin-file ceiling',
     detail: 'All gates passed. The model scored 305 and the thin-file rule bound the limit before affordability did.',
@@ -396,7 +396,7 @@ const FALLBACK_SEED = {
     { param: 'consistency', op: 'gte', value: '0.70 index', points: 120, note: '', enabled: true },
     { param: 'activeDays', op: 'gte', value: '0.50 ratio', points: 80, note: '', enabled: true },
     { param: 'avgBalance', op: 'gte', value: '$10 buffer over 90 days', points: 100, note: '', enabled: true },
-    { param: 'recharge', op: 'eq', value: 'steady weekly top-ups', points: 50, note: 'Inactive — data not yet available', enabled: false },
+    { param: 'recharge', op: 'eq', value: 'steady weekly top-ups', points: 50, note: 'Inactive: data not yet available', enabled: false },
   ],
   tiers: { fullMin: 4, partialMin: 2, thinCeiling: 80, zeroMin: 8 },
 };
@@ -415,10 +415,10 @@ const DF_VERSIONS = [
 const AA_VERSIONS = [
   { version: 'v2.1', status: 'Live', summary: 'Advance ceiling raised $10 → $15 after repayment cohort review.', meta: 'Published by R. Chikanda · effective 28 Jul 2026', action: 'Compare' },
   { version: 'v2.0', status: 'Archived', summary: 'Introduced 3-strike lockout for late repayers.', meta: 'Published 9 May 2026 · retired 28 Jul 2026', action: 'Roll back' },
-  { version: 'v1.0', status: 'Archived', summary: 'Initial national launch — airtime only, $2–$10 advances.', meta: 'Published 11 Feb 2026 · retired 9 May 2026', action: 'Roll back' },
+  { version: 'v1.0', status: 'Archived', summary: 'Initial national launch: airtime only, $2–$10 advances.', meta: 'Published 11 Feb 2026 · retired 9 May 2026', action: 'Roll back' },
 ];
 
-// Limits & affordability — configurable PER PROFILE. Field types drive the
+// Limits & affordability, configurable PER PROFILE. Field types drive the
 // editor: percent / currency / months / select / text.
 const INCOME_PROXIES = ['90-day median inflow', '90-day mean inflow', '30-day median inflow', 'Declared income', 'Blended inflow + declared'];
 
@@ -470,7 +470,7 @@ const LIMITS_AA = {
 
 const LIMITS_EMPTY = {
   matrixCols: ['Below 10%', '10–18%', '18–25%', 'Above 25%'],
-  matrix: [['—', '—', '—', '—'], ['—', '—', '—', '—'], ['—', '—', '—', '—'], ['—', '—', '—', '—']],
+  matrix: [['n/a', 'n/a', 'n/a', 'n/a'], ['n/a', 'n/a', 'n/a', 'n/a'], ['n/a', 'n/a', 'n/a', 'n/a'], ['n/a', 'n/a', 'n/a', 'n/a']],
   afford: [
     { key: 'ratio', label: 'Affordability ratio', hint: 'Instalment as a share of inferred monthly income', value: '0', type: 'percent' },
     { key: 'proxy', label: 'Income proxy', hint: 'How inferred income is derived', value: '90-day median inflow', type: 'select', options: INCOME_PROXIES },
@@ -501,11 +501,11 @@ const PROFILE_SEEDS = [
     touched: { simulate: true },
   },
   {
-    name: 'Life Cover', blurb: 'Premium affordability profile — not yet configured', market: 'Zimbabwe',
-    version: '—', status: 'Not started', editedAt: '—', editedBy: '—', third: 'Copy rules',
+    name: 'Life Cover', blurb: 'Premium affordability profile, not yet configured', market: 'Zimbabwe',
+    version: 'n/a', status: 'Not started', editedAt: 'n/a', editedBy: 'n/a', third: 'Copy rules',
     rules: [], bands: EMPTY_BANDS, versions: [], limits: LIMITS_EMPTY,
     touched: { simulate: false },
-    blank: true,   // nothing seeded — this profile starts from zero
+    blank: true,   // nothing seeded; this profile starts from zero
   },
 ];
 
@@ -521,7 +521,7 @@ const SIM_TAKE_UP = 0.35;
 // Historical populations the what-if simulation can be stamped against.
 // KPIs themselves are derived from the profile's own bands, not from a fixture.
 const SIM_POPULATIONS = [
-  { label: 'Ecocash wallet base — Jan–Jun 2026 (240k)', size: 240000 },
+  { label: 'Ecocash wallet base, Jan–Jun 2026 (240k)', size: 240000 },
   { label: 'Active device-financing applicants (38k)', size: 38000 },
   { label: 'Thin-file cohort (61k)', size: 61000 },
 ];

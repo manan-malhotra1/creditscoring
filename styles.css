@@ -1,4 +1,4 @@
-/* Sasai Credit — Rule Engine Console */
+/* Sasai Credit: Rule Engine Console */
 
 html, body { margin: 0; padding: 0; background: #ffffff; }
 body {
@@ -776,7 +776,7 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
 .step-footer-state.is-done { color: #067647; font-weight: 600; }
 .step-footer-state.is-partial { color: #7A5B12; font-weight: 600; }
 
-/* The footer's Next/Back links stay live in read-only view — they only navigate. */
+/* The footer's Next/Back links stay live in read-only view, they only navigate. */
 .profile-content.view-mode .step-footer .btn { pointer-events: auto; opacity: 1; }
 
 .btn.is-disabled { opacity: 0.45; cursor: not-allowed; }
@@ -918,7 +918,7 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
   font-size: 12.5px; background: #FCFCFD;
 }
 
-/* Sample switching stays live in read-only view — it mutates nothing. */
+/* Sample switching stays live in read-only view, it mutates nothing. */
 .profile-content.view-mode .di-tab { pointer-events: auto; opacity: 1; }
 
 /* ---------- Fallback scorecard ---------- */
