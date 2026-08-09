@@ -12,7 +12,6 @@ const SECTION_TAGS = [
   ['limits', 'Limit assignment'],
   ['afford', 'Affordability'],
   ['exposure', 'Exposure'],
-  ['thin', 'Thin-file'],
   ['ladder', 'Credit ladder'],
   ['blast', 'Blast radius'],
   ['fraud', 'Fraud & lists'],
@@ -28,11 +27,11 @@ const SECTION_TAG_LABEL = Object.fromEntries(SECTION_TAGS);
 const PARAM_DEFS = [
   // Customer input signals: read directly from the wallet and KYC record
   { key: 'age', label: 'Customer age', group: 'input', type: 'duration', unit: 'years', sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
-  { key: 'tenure', label: 'Wallet tenure', group: 'input', type: 'duration', unit: 'months', sections: ['gates', 'coverage', 'fallback', 'thin', 'ladder', 'coldstart'] },
+  { key: 'tenure', label: 'Wallet tenure', group: 'input', type: 'duration', unit: 'months', sections: ['gates', 'coverage', 'fallback', 'ladder', 'coldstart'] },
   { key: 'kyc', label: 'KYC status', group: 'input', type: 'category', values: ['Fully verified (Tier 2)', 'SIM-registered (Tier 1)', 'Unverified'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
   { key: 'account', label: 'Account status', group: 'input', type: 'category', values: ['Active', 'Active-dormant <30d', 'Dormant', 'Suspended', 'Closed'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
-  { key: 'balance', label: 'Current wallet balance', group: 'input', type: 'currency', sections: ['coverage', 'fallback', 'thin'] },
-  { key: 'avgBalance', label: 'Average balance (90 days)', group: 'input', type: 'currency', sections: ['coverage', 'fallback', 'thin'] },
+  { key: 'balance', label: 'Current wallet balance', group: 'input', type: 'currency', sections: ['coverage', 'fallback'] },
+  { key: 'avgBalance', label: 'Average balance (90 days)', group: 'input', type: 'currency', sections: ['coverage', 'fallback'] },
   // Time on book: proves data sufficiency (thin-file) and earns ladder steps.
   { key: 'device', label: 'Device type on file', group: 'input', type: 'category', values: ['Smartphone', 'Feature phone', 'Unknown'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
   { key: 'sim', label: 'SIM tenure', group: 'input', type: 'duration', unit: 'days', sections: ['gates', 'coverage', 'fallback', 'fraud', 'coldstart'] },
@@ -40,24 +39,24 @@ const PARAM_DEFS = [
   { key: 'blocklist', label: 'Fraud blocklist match', group: 'input', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['gates', 'fraud', 'coldstart'] },
 
   // Inferred customer signals: derived by the feature pipeline
-  { key: 'income', label: 'Inferred monthly income', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
-  { key: 'inflow', label: 'Average monthly inflow', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
+  { key: 'income', label: 'Inferred monthly income', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits'] },
+  { key: 'inflow', label: 'Average monthly inflow', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits'] },
   { key: 'outflow', label: 'Average monthly outflow', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits'] },
-  { key: 'consistency', label: 'Cashflow consistency', group: 'inferred', type: 'ratio', unit: 'index', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
-  { key: 'volatility', label: 'Balance volatility', group: 'inferred', type: 'ratio', unit: 'coefficient', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
+  { key: 'consistency', label: 'Cashflow consistency', group: 'inferred', type: 'ratio', unit: 'index', sections: ['afford', 'coverage', 'fallback', 'limits'] },
+  { key: 'volatility', label: 'Balance volatility', group: 'inferred', type: 'ratio', unit: 'coefficient', sections: ['afford', 'coverage', 'fallback', 'limits'] },
   { key: 'afford', label: 'Affordability ratio', group: 'inferred', type: 'percent', sections: ['afford', 'coverage', 'fallback', 'limits'] },
-  { key: 'txnMonths', label: 'Months of transaction history', group: 'inferred', type: 'duration', unit: 'months', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin', 'ladder'] },
+  { key: 'txnMonths', label: 'Months of transaction history', group: 'inferred', type: 'duration', unit: 'months', sections: ['afford', 'coverage', 'fallback', 'limits', 'ladder'] },
   // Money already at risk: caps the limit, and gates the next ladder step.
   { key: 'exposure', label: 'Existing group exposure', group: 'inferred', type: 'currency', sections: ['afford', 'limits', 'exposure', 'ladder'] },
   { key: 'onTime', label: 'On-time instalments paid', group: 'inferred', type: 'count', unit: 'instalments', sections: ['ladder', 'fallback', 'exposure'] },
   { key: 'arrears', label: 'Days in arrears (last 90 days)', group: 'inferred', type: 'duration', unit: 'days', sections: ['ladder', 'fallback', 'exposure'] },
-  { key: 'activeDays', label: 'Active-days ratio (90 days)', group: 'inferred', type: 'ratio', unit: 'ratio', sections: ['coverage', 'fallback', 'thin'] },
-  { key: 'recharge', label: 'Recharge regularity', group: 'inferred', type: 'category', values: ['steady weekly top-ups', 'irregular top-ups', 'no recent top-ups'], sections: ['coverage', 'fallback', 'thin'] },
+  { key: 'activeDays', label: 'Active-days ratio (90 days)', group: 'inferred', type: 'ratio', unit: 'ratio', sections: ['coverage', 'fallback'] },
+  { key: 'recharge', label: 'Recharge regularity', group: 'inferred', type: 'category', values: ['steady weekly top-ups', 'irregular top-ups', 'no recent top-ups'], sections: ['coverage', 'fallback'] },
 
   // Model outputs: produced by the shared scoring model
-  { key: 'score', label: 'Model score', group: 'model', type: 'points', unit: 'points', sections: ['bands', 'coverage', 'limits', 'thin', 'ladder'] },
+  { key: 'score', label: 'Model score', group: 'model', type: 'points', unit: 'points', sections: ['bands', 'coverage', 'limits', 'ladder'] },
   { key: 'pd', label: 'Probability of default', group: 'model', type: 'percent', sections: ['bands', 'coverage', 'limits'] },
-  { key: 'confidence', label: 'Model confidence (coverage)', group: 'model', type: 'ratio', unit: 'index', sections: ['bands', 'coverage', 'thin'] },
+  { key: 'confidence', label: 'Model confidence (coverage)', group: 'model', type: 'ratio', unit: 'index', sections: ['bands', 'coverage'] },
 
   // Aggregate / system signals: portfolio and operational counters.
   // Deliberately NEVER valid in eligibility or affordability.
@@ -110,7 +109,6 @@ const SECTION_ACTIONS = {
   limits: ['pass', 'decline', 'refer', 'capAfford', 'reduce'],
   afford: ['pass', 'decline', 'refer', 'capAfford', 'reduce'],
   exposure: ['pass', 'decline', 'refer', 'capAfford', 'reduce'],
-  thin: ['pass', 'decline', 'refer', 'capThin', 'hold'],
   ladder: ['pass', 'refer', 'ladder', 'hold'],
   blast: ['pass', 'refer', 'throttle', 'hold'],
   fraud: ['pass', 'decline', 'refer', 'hold'],
@@ -130,11 +128,9 @@ const SECTION_GROUPS = [
   { key: 'universal', prefix: '', label: 'Applies to everyone',
     hint: 'Non-negotiable checks. A customer who fails one of these is declined outright.' },
   { key: 'fork', prefix: '', label: 'The routing fork',
-    hint: 'Decides which of the two paths below the customer takes.' },
-  { key: 'cold', prefix: 'A', label: 'Cold-start path, runs when data is insufficient',
-    hint: 'Taken when the coverage check finds too little data to trust a score. The scored-path sections below are skipped entirely.' },
-  { key: 'scored', prefix: 'B', label: 'Scored path, only runs when there is enough data',
-    hint: 'Taken when the coverage check is satisfied. Skipped entirely for a cold-start customer.' },
+    hint: 'Decides whether the customer is scored by the model at all, or handed to step 1, the Fallback scorecard.' },
+  { key: 'scored', prefix: 'B', label: 'Scored path, needs a valid high-confidence score',
+    hint: 'Runs only when the model returns a score the coverage check is willing to trust. Skipped entirely when data is insufficient: that customer is handled in full by step 1, the Fallback scorecard.' },
   { key: 'cross', prefix: 'C', label: 'Cross-cutting, applied to every decision',
     hint: 'Runs whichever branch the customer took.' },
 ];
@@ -143,7 +139,6 @@ const SECTION_GROUPS = [
 const SECTIONS = [
   ['gates', 'Eligibility gates', 'KYC, fraud & AML, account status and age. Nothing here needs behavioural data.', 'eligibility gates', 'universal'],
   ['coverage', 'Data coverage', 'Enough data to trust a score? These rules decide the branch.', 'the coverage check', 'fork'],
-  ['thin', 'Thin-file & cold-start', 'The not-enough-data branch: light entry gates and a starter offer.', 'thin-file', 'cold'],
   ['limits', 'Limit assignment', 'How the starting limit is chosen', 'limit assignment', 'scored'],
   ['afford', 'Affordability', 'What the customer can actually repay', 'affordability', 'scored'],
   ['exposure', 'Exposure & concentration', 'Total money at risk across a customer or segment', 'exposure', 'scored'],
@@ -175,9 +170,6 @@ const RULES = [
   ['exposure', 'exposure', 'gte', '$600 total across products', 'capAfford', true, 'X-01', 'RC-401'],
   ['exposure', 'exposure', 'gte', '$450 on this product', 'capAfford', true, 'X-02', 'RC-401'],
   ['exposure', 'cluster', 'gte', '3 wallets', 'decline', false, 'X-03', 'RC-403'],
-  ['thin', 'txnMonths', 'lte', '3 months', 'capThin', true, 'T-01', 'RC-301'],
-  ['thin', 'score', 'lte', '300 points', 'capThin', true, 'T-02', 'RC-114'],
-  ['thin', 'balance', 'gte', '$15 average over 30 days', 'pass', true, 'T-03', 'RC-304'],
   ['ladder', 'onTime', 'gte', '2 instalments', 'ladder', true, 'C-01', 'RC-701'],
   ['ladder', 'arrears', 'eq', '0 days', 'ladder', true, 'C-02', 'RC-701'],
   ['ladder', 'score', 'gte', '+40 points since last review', 'ladder', false, 'C-03', 'RC-701'],
@@ -304,7 +296,6 @@ const AA_RULES = [
   ['limits', 'exposure', 'gte', '$1 in open advances', 'decline', true, 'L-02', 'RC-401'],
   ['afford', 'afford', 'gte', '15% of inferred monthly income', 'capAfford', true, 'A-01', 'RC-207'],
   ['exposure', 'exposure', 'gte', '$15 on this product', 'capAfford', true, 'X-01', 'RC-401'],
-  ['thin', 'txnMonths', 'lte', '1 month', 'capThin', true, 'T-01', 'RC-301'],
   ['ladder', 'onTime', 'gte', '3 repayments', 'ladder', true, 'C-01', 'RC-701'],
   ['ladder', 'arrears', 'eq', '0 days', 'ladder', true, 'C-02', 'RC-701'],
   ['blast', 'dailyApprovals', 'gte', '8,000 approvals', 'throttle', true, 'B-01', 'RC-601'],
@@ -388,8 +379,8 @@ const SAMPLE_DECISIONS = [
     id: 'sd2', name: 'Applicant B', summary: '31 · wallet 14 months · score 305 · 3 months history',
     outcome: 'Approve at thin-file cap', outcomeKind: 'approve',
     factors: ['RC-802', 'RC-801', 'RC-803'],
-    boundRule: 'T-01', boundLabel: 'capped by thin-file ceiling',
-    detail: 'All gates passed. The model scored 305 and the thin-file rule bound the limit before affordability did.',
+    boundRule: 'D-03', boundLabel: 'capped at the thin-file ceiling',
+    detail: 'All gates passed and coverage was satisfied, so this customer was scored normally. Cashflow consistency was weak enough for the coverage rule to cap the limit at the thin-file ceiling before affordability bound it.',
   },
   {
     id: 'sd3', name: 'Applicant C', summary: '38 · wallet 3 years · score 642 · income $180',
@@ -468,7 +459,7 @@ const COLDSTART_BLANK = {
   defer: { retryDays: '30' },
 };
 
-const DEFAULT_OPEN = { gates: true, coverage: true, limits: false, afford: true, exposure: false, thin: false, ladder: false, blast: false, fraud: false, pilot: false };
+const DEFAULT_OPEN = { gates: true, coverage: true, limits: false, afford: true, exposure: false, ladder: false, blast: false, fraud: false, pilot: false };
 
 const DF_VERSIONS = [
   { version: 'v1.5', status: 'Draft', summary: '7 rules changed, Standard floor 500 → 520, coverage tightened.', meta: 'Edited by T. Moyo · 4 Aug 2026', action: 'Compare' },

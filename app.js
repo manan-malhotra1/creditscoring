@@ -727,18 +727,18 @@ function renderRules() {
   // A compact map of the whole evaluation, so the branch is visible before you
   // read a single rule.
   const forkMap = `
-  <div class="fork-map" role="img" aria-label="Evaluation flow: everyone passes the eligibility gates, then the coverage check routes them to either the cold-start path or the scored path, and both then run the cross-cutting checks.">
+  <div class="fork-map" role="img" aria-label="Evaluation flow: everyone passes the eligibility gates, then the coverage check decides whether there is a valid score. If not, the customer is handled by step 1, the Fallback scorecard. If so, the scored path runs. Both then run the cross-cutting checks.">
     <span class="fm-node">Every applicant</span>
     <span class="fm-arrow" aria-hidden="true">→</span>
     <span class="fm-node fm-universal">01 Eligibility gates</span>
     <span class="fm-arrow" aria-hidden="true">→</span>
-    <span class="fm-node fm-fork">02 Enough data?</span>
+    <span class="fm-node fm-fork">02 Valid score?</span>
     <span class="fm-split" aria-hidden="true">
       <span class="fm-split-line fm-split-up"></span>
       <span class="fm-split-line fm-split-down"></span>
     </span>
     <span class="fm-branches">
-      <span class="fm-node fm-cold">No → Cold-start path</span>
+      <span class="fm-node fm-cold">No → Step 1, Fallback scorecard</span>
       <span class="fm-node fm-scored">Yes → Scored path</span>
     </span>
     <span class="fm-arrow" aria-hidden="true">→</span>
@@ -751,23 +751,26 @@ function renderRules() {
   <div class="fork-panel">
     <div class="fork-panel-head">
       <span class="fork-if">The fork</span>
-      <span class="fork-panel-sub">${coverageRules} coverage rule${coverageRules === 1 ? '' : 's'} decide which way a customer goes. They take one branch or the other, never both.</span>
+      <span class="fork-panel-sub">${coverageRules} coverage rule${coverageRules === 1 ? '' : 's'} decide whether the model score can be trusted. A customer takes one branch or the other, never both.</span>
     </div>
     <div class="fork-cols">
       <div class="fork-col fork-col-cold">
-        <div class="fork-col-cond">If below the coverage threshold</div>
+        <div class="fork-col-cond">If there is not enough data to trust a score</div>
         <div class="fork-col-arrow" aria-hidden="true">↓</div>
-        <div class="fork-col-title">Cold-start path</div>
-        <ul class="fork-col-list">${branchLabel('cold').map(t => `<li>${esc(t)}</li>`).join('')}</ul>
-        <div class="fork-col-note">Skips every scored-path section.</div>
+        <div class="fork-col-title">Step 1, <span class="nav-link" data-tab="fallback">Fallback scorecard</span></div>
+        <ul class="fork-col-list">
+          <li>Points scorecard sets the score from whatever the customer can show</li>
+          <li>Cold-start policy handles a customer with no data at all</li>
+        </ul>
+        <div class="fork-col-note">This path is handled entirely on that tab. None of the sections below run.</div>
       </div>
       <div class="fork-or" aria-hidden="true">or</div>
       <div class="fork-col fork-col-scored">
-        <div class="fork-col-cond">Else, coverage satisfied</div>
+        <div class="fork-col-cond">Else, a valid high-confidence score</div>
         <div class="fork-col-arrow" aria-hidden="true">↓</div>
         <div class="fork-col-title">Scored path</div>
         <ul class="fork-col-list">${branchLabel('scored').map(t => `<li>${esc(t)}</li>`).join('')}</ul>
-        <div class="fork-col-note">Skipped entirely for a cold-start customer.</div>
+        <div class="fork-col-note">Runs only on a score the model is confident in. Skipped when data is insufficient.</div>
       </div>
     </div>
   </div>`;
@@ -799,7 +802,7 @@ function renderRules() {
   <div class="page-head" style="margin-bottom:16px;">
     <div>
       <h1 class="page-title">Rules</h1>
-      <p class="page-desc" style="max-width:820px;"><strong style="color:#101828;">Evaluation is a branch, not a checklist.</strong> Everyone passes the non-negotiable eligibility gates, then the coverage check routes them to the scored path or the cold-start path.</p>
+      <p class="page-desc" style="max-width:820px;"><strong style="color:#101828;">Evaluation is a branch, not a checklist.</strong> Everyone passes the non-negotiable eligibility gates. The coverage check then decides whether the model produced a score worth trusting: if not, the customer is handled entirely by step 1, the <span class="nav-link" data-tab="fallback">Fallback scorecard</span>, and none of the sections here run. Everything below the fork needs a valid high-confidence score.</p>
       <p class="page-desc" style="max-width:820px;margin-top:6px;">A rule is one sentence: <em>when something about the customer is true, do this.</em> Read the sentence, then change any part of it using the boxes underneath. Nothing here needs code.</p>
     </div>
     <div class="page-head-actions">
