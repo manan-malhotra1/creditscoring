@@ -607,7 +607,19 @@ function renderRules() {
   const activeCount = c.rules.filter(r => r.enabled).length;
   const allOpen = Object.values(c.open).every(Boolean);
 
-  const sections = SECTIONS.map(([key, title, desc, shortTitle], i) => {
+  // Number within the branch, not across it: A1 and B1 are alternatives, so
+  // continuing 03, 04, 05… would read as consecutive steps when they are not.
+  const seq = {};
+  const sectionNum = (groupKey) => {
+    const g = SECTION_GROUPS.find(x => x.key === groupKey);
+    seq[groupKey] = (seq[groupKey] || 0) + 1;
+    if (g.prefix) return g.prefix + seq[groupKey];
+    // Universal and fork steps share one running count: 01, 02.
+    seq._top = (seq._top || 0) + 1;
+    return String(seq._top).padStart(2, '0');
+  };
+
+  const sectionCards = SECTIONS.map(([key, title, desc, shortTitle, groupKey], i) => {
     const rules = c.rules.filter(r => r.section === key);
     const open = !!c.open[key];
     const enabledCount = rules.filter(r => r.enabled).length;
@@ -679,13 +691,14 @@ function renderRules() {
       </div>`;
     }).join('') : '';
 
-    return `
-    <div class="card section-card">
+    const num = sectionNum(groupKey);
+    const html = `
+    <div class="card section-card" data-group="${groupKey}">
       <div class="section-head" data-action="toggle-section" data-section="${key}"
         role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}"
-        aria-label="${esc(title)}: ${enabledCount} of ${rules.length} rules active. ${open ? 'Collapse' : 'Expand'} section."
+        aria-label="Step ${num}, ${esc(title)}: ${enabledCount} of ${rules.length} rules active. ${open ? 'Collapse' : 'Expand'} section."
         style="border-bottom:${open ? '1px solid #E4E7EC' : 'none'};">
-        <div class="section-num">${String(i + 1).padStart(2, '0')}</div>
+        <div class="section-num section-num-${groupKey}">${num}</div>
         <div style="min-width:0;">
           <h2 class="section-title">${esc(title)}</h2>
           <div class="section-desc">${esc(desc)}</div>
@@ -703,13 +716,91 @@ function renderRules() {
         </div>
       </div>` : ''}
     </div>`;
+    return { groupKey, html };
+  });
+
+  /* ---------- The routing fork ---------- */
+
+  const coverageRules = c.rules.filter(r => r.section === 'coverage' && r.enabled).length;
+  const branchLabel = (g) => SECTIONS.filter(s2 => s2[4] === g).map(s2 => s2[1]);
+
+  // A compact map of the whole evaluation, so the branch is visible before you
+  // read a single rule.
+  const forkMap = `
+  <div class="fork-map" role="img" aria-label="Evaluation flow: everyone passes the eligibility gates, then the coverage check routes them to either the cold-start path or the scored path, and both then run the cross-cutting checks.">
+    <span class="fm-node">Every applicant</span>
+    <span class="fm-arrow" aria-hidden="true">→</span>
+    <span class="fm-node fm-universal">01 Eligibility gates</span>
+    <span class="fm-arrow" aria-hidden="true">→</span>
+    <span class="fm-node fm-fork">02 Enough data?</span>
+    <span class="fm-split" aria-hidden="true">
+      <span class="fm-split-line fm-split-up"></span>
+      <span class="fm-split-line fm-split-down"></span>
+    </span>
+    <span class="fm-branches">
+      <span class="fm-node fm-cold">No → Cold-start path</span>
+      <span class="fm-node fm-scored">Yes → Scored path</span>
+    </span>
+    <span class="fm-arrow" aria-hidden="true">→</span>
+    <span class="fm-node fm-cross">Cross-cutting</span>
+    <span class="fm-arrow" aria-hidden="true">→</span>
+    <span class="fm-node fm-decision">Decision</span>
+  </div>`;
+
+  const forkBanner = `
+  <div class="fork-panel">
+    <div class="fork-panel-head">
+      <span class="fork-if">The fork</span>
+      <span class="fork-panel-sub">${coverageRules} coverage rule${coverageRules === 1 ? '' : 's'} decide which way a customer goes. They take one branch or the other, never both.</span>
+    </div>
+    <div class="fork-cols">
+      <div class="fork-col fork-col-cold">
+        <div class="fork-col-cond">If below the coverage threshold</div>
+        <div class="fork-col-arrow" aria-hidden="true">↓</div>
+        <div class="fork-col-title">Cold-start path</div>
+        <ul class="fork-col-list">${branchLabel('cold').map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+        <div class="fork-col-note">Skips every scored-path section.</div>
+      </div>
+      <div class="fork-or" aria-hidden="true">or</div>
+      <div class="fork-col fork-col-scored">
+        <div class="fork-col-cond">Else, coverage satisfied</div>
+        <div class="fork-col-arrow" aria-hidden="true">↓</div>
+        <div class="fork-col-title">Scored path</div>
+        <ul class="fork-col-list">${branchLabel('scored').map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+        <div class="fork-col-note">Skipped entirely for a cold-start customer.</div>
+      </div>
+    </div>
+  </div>`;
+
+  /* ---------- Assemble: cards, group dividers, and the fork after coverage ---------- */
+
+  const divider = (g) => `
+    <div class="group-divider group-divider-${g.key}">
+      <div class="group-divider-label">${esc(g.label)}</div>
+      <div class="group-divider-hint">${esc(g.hint)}</div>
+    </div>`;
+
+  let lastGroup = null;
+  const sections = sectionCards.map(({ groupKey, html }) => {
+    let out = '';
+    if (groupKey !== lastGroup) {
+      const g = SECTION_GROUPS.find(x => x.key === groupKey);
+      // The universal group needs no divider: it is simply the start.
+      if (g.key !== 'universal') out += divider(g);
+      lastGroup = groupKey;
+    }
+    out += html;
+    // The fork sits between the coverage check and the branch it chooses.
+    if (groupKey === 'fork') out += forkBanner;
+    return out;
   }).join('');
 
   return `
   <div class="page-head" style="margin-bottom:16px;">
     <div>
       <h1 class="page-title">Rules</h1>
-      <p class="page-desc" style="max-width:760px;">A rule is one sentence: <em>when something about the customer is true, do this.</em> Read the sentence, then change any part of it using the boxes underneath. Nothing here needs code.</p>
+      <p class="page-desc" style="max-width:820px;"><strong style="color:#101828;">Evaluation is a branch, not a checklist.</strong> Everyone passes the non-negotiable eligibility gates, then the coverage check routes them to the scored path or the cold-start path.</p>
+      <p class="page-desc" style="max-width:820px;margin-top:6px;">A rule is one sentence: <em>when something about the customer is true, do this.</em> Read the sentence, then change any part of it using the boxes underneath. Nothing here needs code.</p>
     </div>
     <div class="page-head-actions">
       <div style="font-size:12.5px;color:#667085;">${activeCount} active of ${c.rules.length} rules</div>
@@ -724,6 +815,8 @@ function renderRules() {
     <li><strong>Reason code</strong>: what gets recorded if this rule is the one that decides the outcome. You choose the code here; the actual wording shown to staff and customers lives in the <span class="nav-link" data-nav="reasoncodes">Reason-code catalogue</span>.</li>
   </ol>
   <p class="howto-example" style="max-width:860px;margin-bottom:18px;">Use the switch on the left to turn a rule off without deleting it. It stops running but stays here so you can turn it back on.</p>
+
+  ${forkMap}
 
   ${sections}`;
 }
@@ -1161,7 +1254,8 @@ function renderDecisionExplanation() {
     decline: ['#FEF3F2', '#B42318', '#FECDCA'],
     approve: ['#ECFDF3', '#067647', '#ABEFC6'],
     refer: ['#EFF4FF', '#172E7B', '#C7D7FE'],
-  }[sample.outcomeKind];
+    route: ['#FFF8E6', '#7A5B12', '#F5DFA5'],
+  }[sample.outcomeKind] || ['#F2F4F7', '#344054', '#E4E7EC'];
 
   const emitted = (code, source, note) => {
     const c = rcByCode(code);
@@ -1192,13 +1286,26 @@ function renderDecisionExplanation() {
       : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.boundRule)} is no longer in this profile, so no code is emitted.</div>`}`;
   } else {
     const fired = ruleByCode(sample.firedRule);
+    const isRoute = sample.outcomeKind === 'route';
+    const note = isRoute ? 'sent to the cold-start branch'
+      : (sample.outcomeKind === 'decline' ? 'stopped here' : 'routed to review');
     body = `
-    <h3 class="di-group-label">Rule that determined the outcome</h3>
+    <h3 class="di-group-label">${isRoute ? 'Rule that chose the branch' : 'Rule that determined the outcome'}</h3>
     ${fired
-      ? emitted(fired.rc, `Rule ${esc(fired.code)} fired: “${esc(sentence(fired))}”`, sample.outcomeKind === 'decline' ? 'stopped here' : 'routed to review')
+      ? emitted(fired.rc, `Rule ${esc(fired.code)} fired: “${esc(sentence(fired))}”`, note)
       : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.firedRule)} is no longer in this profile, so no code is emitted.</div>`}
     <h3 class="di-group-label" style="margin-top:14px;">Model factors</h3>
-    <div class="di-emit di-none" style="padding:12px 14px;">Not evaluated. The application stopped before scoring, so no factor codes are emitted.</div>`;
+    <div class="di-emit di-none" style="padding:12px 14px;">${isRoute
+      ? 'Not evaluated. There was not enough data to trust a score, which is why the customer was routed rather than scored.'
+      : 'Not evaluated. The application stopped before scoring, so no factor codes are emitted.'}</div>
+    ${isRoute ? `<h3 class="di-group-label" style="margin-top:14px;">What runs instead</h3>
+    <div class="di-emit" style="border-left-color:#F5B546;">
+      <div style="flex:1;min-width:0;">
+        <div class="di-emit-label">Cold-start path</div>
+        <div class="di-emit-source">The scored-path sections are skipped. Light entry gates decide whether a starter offer is made, and failing them defers rather than declines.</div>
+      </div>
+      <span class="di-emit-note">branch taken</span>
+    </div>` : ''}`;
   }
 
   return `

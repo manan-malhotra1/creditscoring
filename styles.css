@@ -826,6 +826,98 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
   pointer-events: none; opacity: 0.75;
 }
 
+/* ---------- The routing fork ---------- */
+
+/* Compact map of the whole evaluation, shown above the sections. */
+.fork-map {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 14px 16px; margin-bottom: 20px;
+  background: #fff; border: 1px solid #E4E7EC; border-radius: 12px;
+}
+.fm-node {
+  padding: 7px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: #F2F4F7; color: #344054; border: 1px solid #E4E7EC;
+}
+.fm-universal { background: #EAF0F7; color: #144989; border-color: #D3E0EE; }
+.fm-fork {
+  background: #172E7B; color: #fff; border-color: #172E7B;
+  border-radius: 20px;
+}
+.fm-cold { background: #FFF8E6; color: #7A5B12; border-color: #F5DFA5; }
+.fm-scored { background: #ECFDF3; color: #067647; border-color: #ABEFC6; }
+.fm-cross { background: rgba(72,194,207,0.14); color: #144989; border-color: rgba(72,194,207,0.5); }
+.fm-decision { background: #144989; color: #fff; border-color: #144989; }
+.fm-arrow { color: #667085; font-size: 14px; }
+.fm-branches { display: flex; flex-direction: column; gap: 5px; }
+.fm-split {
+  position: relative; width: 14px; height: 44px; flex: 0 0 14px;
+}
+.fm-split-line {
+  position: absolute; left: 0; width: 14px; height: 2px; background: #D0D5DD;
+}
+.fm-split-up { top: 25%; transform: rotate(-24deg); }
+.fm-split-down { top: 75%; transform: rotate(24deg); }
+
+/* The if/else panel, sitting between the coverage check and the branches. */
+.fork-panel {
+  margin: 0 0 14px 0; padding: 16px 18px;
+  background: #F8FAFC; border: 1px solid #D3E0EE; border-radius: 12px;
+}
+.fork-panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.fork-if {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  color: #fff; background: #172E7B; padding: 3px 10px; border-radius: 20px;
+}
+.fork-panel-sub { font-size: 12.5px; color: #344054; }
+.fork-cols { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; }
+.fork-col {
+  flex: 1 1 240px; min-width: 240px;
+  padding: 14px; border-radius: 10px; background: #fff;
+  border: 1px solid #E4E7EC;
+}
+.fork-col-cold { border-left: 3px solid #F5B546; }
+.fork-col-scored { border-left: 3px solid #12B76A; }
+.fork-col-cond {
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.3px;
+  text-transform: uppercase; color: #667085;
+}
+.fork-col-arrow { font-size: 15px; color: #667085; margin: 4px 0; }
+.fork-col-title { font-size: 14.5px; font-weight: 700; color: #101828; }
+.fork-col-list {
+  margin: 8px 0 0 0; padding-left: 18px;
+  font-size: 12.5px; color: #344054; line-height: 1.7;
+}
+.fork-col-note { margin-top: 8px; font-size: 11.5px; color: #667085; font-style: italic; }
+.fork-or {
+  align-self: center; flex: 0 0 auto;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  color: #667085; background: #fff; border: 1px solid #D0D5DD;
+  padding: 5px 10px; border-radius: 20px;
+}
+
+/* Labelled dividers between the groups of sections. */
+.group-divider { margin: 24px 0 12px 0; padding-left: 12px; border-left: 3px solid #D0D5DD; }
+.group-divider-label {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: #344054;
+}
+.group-divider-hint { font-size: 12px; color: #667085; margin-top: 3px; max-width: 720px; text-wrap: pretty; }
+.group-divider-cold { border-left-color: #F5B546; }
+.group-divider-cold .group-divider-label { color: #7A5B12; }
+.group-divider-scored { border-left-color: #12B76A; }
+.group-divider-scored .group-divider-label { color: #067647; }
+.group-divider-cross { border-left-color: #48C2CF; }
+.group-divider-cross .group-divider-label { color: #144989; }
+.group-divider-fork { border-left-color: #172E7B; }
+.group-divider-fork .group-divider-label { color: #172E7B; }
+
+/* Step number tinted by which branch the section belongs to. */
+.section-num-fork { background: #172E7B; color: #fff; }
+.section-num-cold { background: #FFF8E6; color: #7A5B12; }
+.section-num-scored { background: #ECFDF3; color: #067647; }
+.section-num-cross { background: rgba(72,194,207,0.16); color: #144989; }
+
 /* ---------- Cold-start / no-data policy ---------- */
 
 .cs-principle {

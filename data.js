@@ -36,6 +36,8 @@ const PARAM_DEFS = [
   // Time on book: proves data sufficiency (thin-file) and earns ladder steps.
   { key: 'device', label: 'Device type on file', group: 'input', type: 'category', values: ['Smartphone', 'Feature phone', 'Unknown'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
   { key: 'sim', label: 'SIM tenure', group: 'input', type: 'duration', unit: 'days', sections: ['gates', 'coverage', 'fallback', 'fraud', 'coldstart'] },
+  // A match on this customer, not a portfolio counter, so it may gate eligibility.
+  { key: 'blocklist', label: 'Fraud blocklist match', group: 'input', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['gates', 'fraud', 'coldstart'] },
 
   // Inferred customer signals: derived by the feature pipeline
   { key: 'income', label: 'Inferred monthly income', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
@@ -65,7 +67,6 @@ const PARAM_DEFS = [
   // Portfolio-level exposure totals are themselves a concentration measure.
   { key: 'pilotExposure', label: 'Total pilot exposure', group: 'system', type: 'currency', sections: ['blast', 'pilot', 'exposure'] },
   { key: 'pilotCell', label: 'Pilot cell', group: 'system', type: 'category', values: ['Harare', 'Bulawayo', 'Mutare', 'Gweru', 'All cells nationwide'], sections: ['pilot'] },
-  { key: 'blocklist', label: 'Fraud blocklist match', group: 'system', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['fraud', 'coldstart'] },
   // Device sharing is both a fraud signal and a concentration signal.
   { key: 'cluster', label: 'Wallets sharing this device (30 days)', group: 'system', type: 'count', unit: 'wallets', sections: ['fraud', 'blast', 'exposure'] },
 ];
@@ -121,17 +122,35 @@ const OPLABEL = Object.fromEntries(OPERATORS);
 const ACTLABEL = Object.fromEntries(ACTIONS);
 const SENT_OP = { gte: 'is at least', lte: 'is at most', between: 'is between', in: 'is one of', notin: 'is not one of', eq: 'is' };
 
+// Evaluation is a branch, not a checklist. Everyone clears the non-negotiable
+// gates, then the coverage check routes them down exactly one of two paths.
+// `prefix` drives the numbering: A for the cold-start branch, B for the scored
+// branch, so the two are never read as consecutive steps.
+const SECTION_GROUPS = [
+  { key: 'universal', prefix: '', label: 'Applies to everyone',
+    hint: 'Non-negotiable checks. A customer who fails one of these is declined outright.' },
+  { key: 'fork', prefix: '', label: 'The routing fork',
+    hint: 'Decides which of the two paths below the customer takes.' },
+  { key: 'cold', prefix: 'A', label: 'Cold-start path, runs when data is insufficient',
+    hint: 'Taken when the coverage check finds too little data to trust a score. The scored-path sections below are skipped entirely.' },
+  { key: 'scored', prefix: 'B', label: 'Scored path, only runs when there is enough data',
+    hint: 'Taken when the coverage check is satisfied. Skipped entirely for a cold-start customer.' },
+  { key: 'cross', prefix: 'C', label: 'Cross-cutting, applied to every decision',
+    hint: 'Runs whichever branch the customer took.' },
+];
+
+// [key, title, description, shortTitle, group]
 const SECTIONS = [
-  ['gates', 'Eligibility gates', 'Who is allowed to be scored at all', 'eligibility gates'],
-  ['coverage', 'Data coverage', 'Minimum data before we trust the score', 'data coverage'],
-  ['limits', 'Limit assignment', 'How the starting limit is chosen', 'limit assignment'],
-  ['afford', 'Affordability', 'What the customer can actually repay', 'affordability'],
-  ['exposure', 'Exposure & concentration', 'Total money at risk across a customer or segment', 'exposure'],
-  ['thin', 'Thin-file & cold-start', 'Customers with little history', 'thin-file'],
-  ['ladder', 'Credit ladder', 'Earning a bigger limit over time', 'the credit ladder'],
-  ['blast', 'Blast radius & throttles', 'Daily brakes on volume and value', 'throttles'],
-  ['fraud', 'Fraud & lists', 'Blocklists, watchlists and velocity checks', 'fraud & lists'],
-  ['pilot', 'Pilot controls', 'Who is in the pilot and for how long', 'pilot controls'],
+  ['gates', 'Eligibility gates', 'KYC, fraud & AML, account status and age. Nothing here needs behavioural data.', 'eligibility gates', 'universal'],
+  ['coverage', 'Data coverage', 'Enough data to trust a score? These rules decide the branch.', 'the coverage check', 'fork'],
+  ['thin', 'Thin-file & cold-start', 'The not-enough-data branch: light entry gates and a starter offer.', 'thin-file', 'cold'],
+  ['limits', 'Limit assignment', 'How the starting limit is chosen', 'limit assignment', 'scored'],
+  ['afford', 'Affordability', 'What the customer can actually repay', 'affordability', 'scored'],
+  ['exposure', 'Exposure & concentration', 'Total money at risk across a customer or segment', 'exposure', 'scored'],
+  ['ladder', 'Credit ladder', 'Earning a bigger limit over time', 'the credit ladder', 'scored'],
+  ['blast', 'Blast radius & throttles', 'Daily brakes on volume and value', 'throttles', 'cross'],
+  ['fraud', 'Fraud & lists', 'Ongoing watchlist and velocity checks, beyond the non-negotiable blocklist gate', 'fraud & lists', 'cross'],
+  ['pilot', 'Pilot controls', 'Who is in the pilot and for how long', 'pilot controls', 'cross'],
 ];
 
 // Rule tuples: [section, param, op, value, action, enabled, code, reasonCode]
@@ -141,8 +160,9 @@ const RULES = [
   ['gates', 'age', 'lte', '65 years', 'pass', true, 'E-02', 'RC-101'],
   ['gates', 'kyc', 'eq', 'Fully verified (Tier 2)', 'pass', true, 'E-03', 'RC-102'],
   ['gates', 'account', 'in', 'Active, Active-dormant <30d', 'pass', true, 'E-04', 'RC-103'],
-  ['gates', 'tenure', 'gte', '6 months', 'pass', true, 'E-05', 'RC-104'],
+  ['gates', 'blocklist', 'eq', 'No match', 'pass', true, 'E-05', 'RC-501'],
   ['coverage', 'txnMonths', 'gte', '3 months', 'pass', true, 'D-01', 'RC-301'],
+  ['coverage', 'tenure', 'gte', '6 months', 'pass', true, 'D-05', 'RC-104'],
   ['coverage', 'inflow', 'gte', '$40 per month', 'pass', true, 'D-02', 'RC-303'],
   ['coverage', 'consistency', 'lte', '0.55 index', 'capThin', true, 'D-03', 'RC-302'],
   ['coverage', 'volatility', 'gte', '0.80 coefficient', 'refer', false, 'D-04', 'RC-302'],
@@ -164,7 +184,6 @@ const RULES = [
   ['blast', 'dailyApprovals', 'gte', '1,200 approvals', 'throttle', true, 'B-01', 'RC-601'],
   ['blast', 'dailyDisbursed', 'gte', '$45,000', 'throttle', true, 'B-02', 'RC-601'],
   ['blast', 'popAffected', 'gte', '5%', 'refer', true, 'B-03', 'RC-602'],
-  ['fraud', 'blocklist', 'eq', 'No match', 'pass', true, 'F-01', 'RC-501'],
   ['fraud', 'sim', 'lte', '90 days', 'decline', true, 'F-02', 'RC-502'],
   ['fraud', 'cluster', 'gte', '3 wallets', 'refer', true, 'F-03', 'RC-403'],
   ['pilot', 'pilotCell', 'in', 'Harare, Bulawayo', 'pass', true, 'P-01', 'RC-402'],
@@ -277,8 +296,9 @@ const AA_RULES = [
   ['gates', 'age', 'gte', '18 years', 'pass', true, 'E-01', 'RC-101'],
   ['gates', 'kyc', 'eq', 'SIM-registered (Tier 1)', 'pass', true, 'E-02', 'RC-102'],
   ['gates', 'account', 'in', 'Active', 'pass', true, 'E-03', 'RC-103'],
-  ['gates', 'tenure', 'gte', '3 months', 'pass', true, 'E-04', 'RC-104'],
+  ['gates', 'blocklist', 'eq', 'No match', 'pass', true, 'E-04', 'RC-501'],
   ['coverage', 'txnMonths', 'gte', '1 month', 'pass', true, 'D-01', 'RC-301'],
+  ['coverage', 'tenure', 'gte', '3 months', 'pass', true, 'D-03', 'RC-104'],
   ['coverage', 'inflow', 'gte', '$5 per month', 'pass', true, 'D-02', 'RC-303'],
   ['limits', 'score', 'gte', '380 points', 'pass', true, 'L-01', 'RC-114'],
   ['limits', 'exposure', 'gte', '$1 in open advances', 'decline', true, 'L-02', 'RC-401'],
@@ -289,7 +309,6 @@ const AA_RULES = [
   ['ladder', 'arrears', 'eq', '0 days', 'ladder', true, 'C-02', 'RC-701'],
   ['blast', 'dailyApprovals', 'gte', '8,000 approvals', 'throttle', true, 'B-01', 'RC-601'],
   ['blast', 'dailyDisbursed', 'gte', '$20,000', 'throttle', true, 'B-02', 'RC-601'],
-  ['fraud', 'blocklist', 'eq', 'No match', 'pass', true, 'F-01', 'RC-501'],
   ['fraud', 'sim', 'lte', '30 days', 'decline', true, 'F-02', 'RC-502'],
   ['pilot', 'pilotCell', 'in', 'All cells nationwide', 'pass', true, 'P-01', 'RC-402'],
 ];
@@ -361,9 +380,9 @@ const MODEL_HEALTH = {
 const SAMPLE_DECISIONS = [
   {
     id: 'sd1', name: 'Applicant A', summary: '24 · wallet 4 months · score not computed',
-    outcome: 'Decline', outcomeKind: 'decline',
-    firedRule: 'E-05',
-    detail: 'Wallet tenure is 4 months, below the 6-month eligibility gate. Evaluation stopped at the first failing gate, so no later rule ran and the model was never called.',
+    outcome: 'Routed to cold-start', outcomeKind: 'route',
+    firedRule: 'D-05',
+    detail: 'Cleared the non-negotiable eligibility gates, then failed the coverage check: wallet tenure is 4 months against a 6-month threshold. That is a routing decision, not a decline. The scored-path sections are skipped and the customer is evaluated on the cold-start branch instead.',
   },
   {
     id: 'sd2', name: 'Applicant B', summary: '31 · wallet 14 months · score 305 · 3 months history',
