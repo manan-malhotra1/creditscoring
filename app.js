@@ -1535,34 +1535,39 @@ function renderFallback() {
   const cs = cfg().coldStart;
   const cold = coldStartCompute();
 
+  // Same row shape as the points table above: a fixed-width control in the
+  // switch column keeps every row's selects on the same vertical line.
   const gateRow = (g) => {
     const opts = paramsForSection('coldstart');
     const valid = opts.some(d => d.key === g.param);
+    const sig = `${labelOf(g.param)} ${SENT_OP[g.op] || g.op} ${g.value}`;
     return `
-    <div class="cs-gate${g.locked ? ' is-locked' : ''}">
-      <div class="cs-gate-main">
+    <div class="fb-row" style="background:${g.locked ? '#FBFCFD' : '#fff'};">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         ${g.locked
-          ? `<span class="cs-lock" title="Non-negotiable: cannot be waived" aria-label="Non-negotiable gate, locked">🔒</span>`
-          : `<span class="cs-lock cs-lock-open" aria-hidden="true">·</span>`}
+          ? `<span class="cs-lock" title="Non-negotiable, cannot be waived" aria-label="Non-negotiable gate, always on">🔒</span>`
+          : `<span class="cs-lock cs-lock-open" aria-hidden="true"></span>`}
         <select class="fb-signal" data-change="cs-param" data-gate="${g.id}" ${g.locked ? 'disabled' : ''}
-          aria-label="Parameter for light entry gate">
+          aria-label="Parameter for light entry gate ${esc(sig)}">
           ${opts.map(d => `<option value="${esc(d.key)}"${d.key === g.param ? ' selected' : ''}>${esc(d.label)}</option>`).join('')}
           ${valid ? '' : `<option value="${esc(g.param)}" selected>${esc(labelOf(g.param))} (not valid here)</option>`}
         </select>
         <select class="fb-op" data-change="cs-op" data-gate="${g.id}" ${g.locked ? 'disabled' : ''}
-          aria-label="Test for light entry gate">${optionGroup(operatorsForParam(g.param), g.op)}</select>
+          aria-label="Test for light entry gate ${esc(sig)}">${optionGroup(operatorsForParam(g.param), g.op)}</select>
         <input class="fb-value" value="${esc(g.value)}" data-change="cs-value" data-gate="${g.id}" ${g.locked ? 'disabled' : ''}
-          aria-label="Value for light entry gate" />
+          aria-label="Value for light entry gate ${esc(sig)}" />
         ${g.locked
-          ? `<span class="cs-badge">Non-negotiable</span>`
-          : `<button class="rule-remove" data-action="cs-remove" data-gate="${g.id}" aria-label="Remove light entry gate">×</button>`}
+          ? `<span class="chip cs-chip-locked">Non-negotiable</span>`
+          : `<button class="rule-remove" data-action="cs-remove" data-gate="${g.id}"
+               aria-label="Remove light entry gate ${esc(sig)}" title="Remove gate">×</button>`}
       </div>
-      ${g.note ? `<div class="cs-gate-note">${esc(g.note)}</div>` : ''}
+      ${g.note ? `<div class="fb-row-note">${esc(g.note)}</div>` : ''}
     </div>`;
   };
 
+  // Single-select, so it reuses the same look as the sample selector on What-if.
   const starterButtons = STARTER_TYPES.map(([k, label]) => `
-    <button type="button" class="cs-type${cs.starter.type === k ? ' on' : ''}" data-action="cs-type" data-type="${k}"
+    <button type="button" class="seg-btn${cs.starter.type === k ? ' active' : ''}" data-action="cs-type" data-type="${k}"
       aria-pressed="${cs.starter.type === k ? 'true' : 'false'}">${esc(label)}</button>`).join('');
 
   const csNum = (field, val, pre, suf, label) => `
@@ -1577,25 +1582,26 @@ function renderFallback() {
   const showDeposit = cs.starter.type === 'deposit' || cs.starter.type === 'both';
 
   const coldStartSection = `
-  <h2 class="page-title" style="font-size:18px;margin-top:30px;">Cold-start / no-data policy</h2>
+  <h2 class="page-title section-heading">Cold-start / no-data policy</h2>
   <p class="page-desc" style="max-width:820px;">Having <em>little</em> data and having <em>no</em> data are different problems. With no data at all, every gate that needs data cannot be answered, so a customer would fail all of them and be shut out permanently. This policy is the lighter path that stops that happening.</p>
-  <div class="cs-principle">Absence of data must never produce a permanent decline.</div>
+  <p class="howto-example" style="max-width:820px;margin-bottom:18px;"><strong>Absence of data must never produce a permanent decline.</strong></p>
 
-  <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:16px;align-items:start;margin-top:16px;">
+  <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:16px;align-items:start;">
     <div style="display:flex;flex-direction:column;gap:16px;">
 
       <div class="card panel">
         <h3 class="panel-title">Missing data is "unknown", not "fail"</h3>
-        <div class="tighten-row" style="margin-top:12px;">
-          <button class="switch switch-lg${cs.unknownIsNotFail ? ' on' : ''}" data-action="cs-unknown"
-            role="switch" aria-checked="${cs.unknownIsNotFail ? 'true' : 'false'}"
-            aria-label="Treat a gate that cannot be evaluated as unknown and route to the cold-start path, rather than failing it"><span class="knob"></span></button>
-          <div>
-            <div class="tighten-title">Route "unknown" to the cold-start path</div>
-            <div class="tighten-sub">${cs.unknownIsNotFail
+        <div class="panel-sub" style="margin-bottom:10px;">What the engine does with a check it cannot answer.</div>
+        <div class="field-row" style="border-bottom:none;align-items:flex-start;">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label">Route "unknown" to the cold-start path</div>
+            <div class="field-hint" style="text-wrap:pretty;">${cs.unknownIsNotFail
               ? 'A gate that cannot be evaluated because the data is missing returns <strong>unknown</strong>. Unknown is sent down the light path below, not counted as a failure.'
               : '<strong>Warning:</strong> unknown currently counts as a failure. A customer with no data will fail every gate and be declined with no way back. This is the cold-start trap.'}</div>
           </div>
+          <button class="switch switch-lg${cs.unknownIsNotFail ? ' on' : ''}" data-action="cs-unknown"
+            role="switch" aria-checked="${cs.unknownIsNotFail ? 'true' : 'false'}"
+            aria-label="Treat a gate that cannot be evaluated as unknown and route to the cold-start path, rather than failing it"><span class="knob"></span></button>
         </div>
       </div>
 
@@ -1606,7 +1612,7 @@ function renderFallback() {
         <div style="margin-top:12px;">
           <button class="add-rule" data-action="cs-add">+ Add light gate</button>
         </div>
-        <div class="cs-locknote">🔒 KYC and fraud / AML are non-negotiable. They stay on, cannot be edited away, and cannot be waived by taking a deposit.</div>
+        <div class="panel-footnote">🔒 KYC and fraud / AML are non-negotiable. They stay on, cannot be edited away, and cannot be waived by taking a deposit.</div>
       </div>
 
     </div>
@@ -1616,7 +1622,7 @@ function renderFallback() {
       <div class="card panel">
         <h3 class="panel-title">Starter offer</h3>
         <div class="panel-sub" style="margin-bottom:10px;">What a customer who clears the light gates is offered.</div>
-        <div class="cs-types" role="group" aria-label="Starter offer type">${starterButtons}</div>
+        <div class="seg-group cs-types" role="group" aria-label="Starter offer type">${starterButtons}</div>
         ${showNano ? `
         <div class="field-row">
           <div style="flex:1;min-width:0;">
