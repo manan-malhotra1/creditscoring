@@ -19,6 +19,7 @@ const SECTION_TAGS = [
   ['pilot', 'Pilot controls'],
   ['bands', 'Score bands'],
   ['fallback', 'Fallback scorecard'],
+  ['coldstart', 'Cold-start gates'],
 ];
 const SECTION_TAG_LABEL = Object.fromEntries(SECTION_TAGS);
 
@@ -26,15 +27,15 @@ const SECTION_TAG_LABEL = Object.fromEntries(SECTION_TAGS);
 // `type` drives which operators and which value editor the rule row offers.
 const PARAM_DEFS = [
   // Customer input signals: read directly from the wallet and KYC record
-  { key: 'age', label: 'Customer age', group: 'input', type: 'duration', unit: 'years', sections: ['gates', 'coverage', 'fallback'] },
-  { key: 'tenure', label: 'Wallet tenure', group: 'input', type: 'duration', unit: 'months', sections: ['gates', 'coverage', 'fallback', 'thin', 'ladder'] },
-  { key: 'kyc', label: 'KYC status', group: 'input', type: 'category', values: ['Fully verified (Tier 2)', 'SIM-registered (Tier 1)', 'Unverified'], sections: ['gates', 'coverage', 'fallback'] },
-  { key: 'account', label: 'Account status', group: 'input', type: 'category', values: ['Active', 'Active-dormant <30d', 'Dormant', 'Suspended', 'Closed'], sections: ['gates', 'coverage', 'fallback'] },
+  { key: 'age', label: 'Customer age', group: 'input', type: 'duration', unit: 'years', sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
+  { key: 'tenure', label: 'Wallet tenure', group: 'input', type: 'duration', unit: 'months', sections: ['gates', 'coverage', 'fallback', 'thin', 'ladder', 'coldstart'] },
+  { key: 'kyc', label: 'KYC status', group: 'input', type: 'category', values: ['Fully verified (Tier 2)', 'SIM-registered (Tier 1)', 'Unverified'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
+  { key: 'account', label: 'Account status', group: 'input', type: 'category', values: ['Active', 'Active-dormant <30d', 'Dormant', 'Suspended', 'Closed'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
   { key: 'balance', label: 'Current wallet balance', group: 'input', type: 'currency', sections: ['coverage', 'fallback', 'thin'] },
   { key: 'avgBalance', label: 'Average balance (90 days)', group: 'input', type: 'currency', sections: ['coverage', 'fallback', 'thin'] },
   // Time on book: proves data sufficiency (thin-file) and earns ladder steps.
-  { key: 'device', label: 'Device type on file', group: 'input', type: 'category', values: ['Smartphone', 'Feature phone', 'Unknown'], sections: ['gates', 'coverage', 'fallback'] },
-  { key: 'sim', label: 'SIM tenure', group: 'input', type: 'duration', unit: 'days', sections: ['gates', 'coverage', 'fallback', 'fraud'] },
+  { key: 'device', label: 'Device type on file', group: 'input', type: 'category', values: ['Smartphone', 'Feature phone', 'Unknown'], sections: ['gates', 'coverage', 'fallback', 'coldstart'] },
+  { key: 'sim', label: 'SIM tenure', group: 'input', type: 'duration', unit: 'days', sections: ['gates', 'coverage', 'fallback', 'fraud', 'coldstart'] },
 
   // Inferred customer signals: derived by the feature pipeline
   { key: 'income', label: 'Inferred monthly income', group: 'inferred', type: 'currency', sections: ['afford', 'coverage', 'fallback', 'limits', 'thin'] },
@@ -64,7 +65,7 @@ const PARAM_DEFS = [
   // Portfolio-level exposure totals are themselves a concentration measure.
   { key: 'pilotExposure', label: 'Total pilot exposure', group: 'system', type: 'currency', sections: ['blast', 'pilot', 'exposure'] },
   { key: 'pilotCell', label: 'Pilot cell', group: 'system', type: 'category', values: ['Harare', 'Bulawayo', 'Mutare', 'Gweru', 'All cells nationwide'], sections: ['pilot'] },
-  { key: 'blocklist', label: 'Fraud blocklist match', group: 'system', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['fraud'] },
+  { key: 'blocklist', label: 'Fraud blocklist match', group: 'system', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['fraud', 'coldstart'] },
   // Device sharing is both a fraud signal and a concentration signal.
   { key: 'cluster', label: 'Wallets sharing this device (30 days)', group: 'system', type: 'count', unit: 'wallets', sections: ['fraud', 'blast', 'exposure'] },
 ];
@@ -404,6 +405,50 @@ const FALLBACK_SEED = {
 const FB_INCOME_BANDS = [[150, 250], [80, 150], [40, 60]];
 const FB_OPERATORS = [...OPERATORS, ['banded', 'banded']];
 
+// Cold-start / no-data policy. Low data and no data are different problems: with
+// no data at all, a gate that needs data cannot be evaluated, so if "unknown"
+// counted as "fail" the customer would fail every gate and be excluded forever.
+// This policy is the lighter path that prevents that trap.
+// Light gate tuples: [param, op, value, locked, note]
+const COLDSTART_LIGHT_GATES = [
+  ['kyc', 'eq', 'Fully verified (Tier 2)', true, 'Non-negotiable. Cannot be waived by a deposit.'],
+  ['blocklist', 'eq', 'No match', true, 'Non-negotiable fraud / AML check. Cannot be waived by a deposit.'],
+  ['account', 'in', 'Active', false, ''],
+  ['age', 'gte', '18 years', false, ''],
+  ['tenure', 'gte', '4 weeks', false, 'Weeks, not months: a new wallet must still be able to qualify.'],
+  ['sim', 'gte', '4 weeks', false, ''],
+];
+
+const STARTER_TYPES = [
+  ['nano', 'Fixed nano-limit'],
+  ['deposit', 'Device with required down payment'],
+  ['both', 'Both allowed'],
+];
+
+const COLDSTART_DF = {
+  unknownIsNotFail: true,
+  gates: COLDSTART_LIGHT_GATES,
+  starter: { type: 'both', nanoAmount: '8', depositPct: '35', deviceLock: true },
+  graduation: { onTimeRequired: '3' },
+  defer: { retryDays: '30' },
+};
+const COLDSTART_AA = {
+  unknownIsNotFail: true,
+  // Airtime advances have no device, so the deposit route does not apply.
+  gates: COLDSTART_LIGHT_GATES.filter(g => g[0] !== 'sim'),
+  starter: { type: 'nano', nanoAmount: '2', depositPct: '0', deviceLock: false },
+  graduation: { onTimeRequired: '3' },
+  defer: { retryDays: '14' },
+};
+const COLDSTART_BLANK = {
+  unknownIsNotFail: true,
+  // The two non-negotiable gates are always present, even before configuration.
+  gates: COLDSTART_LIGHT_GATES.filter(g => g[3]),
+  starter: { type: 'nano', nanoAmount: '0', depositPct: '0', deviceLock: false },
+  graduation: { onTimeRequired: '0' },
+  defer: { retryDays: '30' },
+};
+
 const DEFAULT_OPEN = { gates: true, coverage: true, limits: false, afford: true, exposure: false, thin: false, ladder: false, blast: false, fraud: false, pilot: false };
 
 const DF_VERSIONS = [
@@ -491,19 +536,19 @@ const PROFILE_SEEDS = [
   {
     name: 'Device Financing', blurb: 'Handset instalments, 3–6 months, Ecocash wallet', market: 'Zimbabwe',
     version: 'v1.5', status: 'Draft', editedAt: '4 Aug 2026, 11:20', editedBy: 'T. Moyo', third: 'Roll back',
-    rules: RULES, bands: DF_BANDS, versions: DF_VERSIONS, limits: LIMITS_DF,
+    rules: RULES, bands: DF_BANDS, versions: DF_VERSIONS, limits: LIMITS_DF, coldStart: COLDSTART_DF,
     touched: { simulate: true },
   },
   {
     name: 'Airtime Advance', blurb: 'Instant airtime top-up credit, repaid on next recharge', market: 'Zimbabwe',
     version: 'v2.1', status: 'Published', editedAt: '28 Jul 2026, 09:15', editedBy: 'R. Chikanda', third: 'View',
-    rules: AA_RULES, bands: AA_BANDS, versions: AA_VERSIONS, limits: LIMITS_AA,
+    rules: AA_RULES, bands: AA_BANDS, versions: AA_VERSIONS, limits: LIMITS_AA, coldStart: COLDSTART_AA,
     touched: { simulate: true },
   },
   {
     name: 'Life Cover', blurb: 'Premium affordability profile, not yet configured', market: 'Zimbabwe',
     version: 'n/a', status: 'Not started', editedAt: 'n/a', editedBy: 'n/a', third: 'Copy rules',
-    rules: [], bands: EMPTY_BANDS, versions: [], limits: LIMITS_EMPTY,
+    rules: [], bands: EMPTY_BANDS, versions: [], limits: LIMITS_EMPTY, coldStart: COLDSTART_BLANK,
     touched: { simulate: false },
     blank: true,   // nothing seeded; this profile starts from zero
   },

@@ -610,6 +610,7 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
 .profile-content.view-mode .rule-remove,
 .profile-content.view-mode .version-action,
 .profile-content.view-mode .val-chip,
+.profile-content.view-mode .cs-type,
 .profile-content.view-mode .btn {
   pointer-events: none;
   opacity: 0.55;
@@ -823,6 +824,65 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
 .profile-content.view-mode .matrix-col-input,
 .profile-content.view-mode .matrix-cell-input {
   pointer-events: none; opacity: 0.75;
+}
+
+/* ---------- Cold-start / no-data policy ---------- */
+
+.cs-principle {
+  display: inline-block; margin-top: 12px;
+  padding: 9px 14px;
+  background: rgba(72,194,207,0.10);
+  border: 1px solid rgba(72,194,207,0.5);
+  border-left: 3px solid #48C2CF;
+  border-radius: 0 8px 8px 0;
+  font-size: 13px; font-weight: 600; color: #144989;
+}
+
+.cs-gate { padding: 9px 0; border-bottom: 1px solid #F6F7F9; }
+.cs-gate-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cs-gate.is-locked { background: #FBFCFD; }
+.cs-gate select, .cs-gate input {
+  height: 32px; padding: 0 8px;
+  border: 1px solid #D0D5DD; border-radius: 8px;
+  background: #fff; font-size: 12px; color: #101828;
+}
+.cs-gate select:disabled, .cs-gate input:disabled {
+  background: #F2F4F7; color: #344054; cursor: default;
+}
+.cs-lock { width: 18px; text-align: center; font-size: 12px; flex: 0 0 18px; }
+.cs-lock-open { color: #667085; }
+.cs-badge {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px;
+  text-transform: uppercase; color: #7A5B12;
+  background: #FFF8E6; border: 1px solid #F5DFA5;
+  padding: 3px 8px; border-radius: 20px; white-space: nowrap;
+}
+.cs-gate-note { font-size: 11.5px; color: #667085; margin: 5px 0 0 26px; }
+.cs-locknote {
+  margin-top: 12px; padding: 10px 12px;
+  background: #F8FAFC; border: 1px solid #E4E7EC; border-radius: 8px;
+  font-size: 11.5px; color: #344054; line-height: 1.5;
+}
+
+.cs-types { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.cs-type {
+  padding: 7px 12px; border-radius: 8px;
+  border: 1px solid #D0D5DD; background: #fff;
+  font-size: 12px; font-weight: 600; color: #344054; cursor: pointer;
+}
+.cs-type:hover { border-color: #144989; color: #144989; }
+.cs-type.on { background: #144989; border-color: #144989; color: #fff; }
+
+.cs-preview-head {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: #667085; margin-bottom: 8px;
+}
+.cs-dim { font-weight: 500; text-transform: none; letter-spacing: 0; color: #667085; }
+.cs-dim-block { opacity: 0.45; }
+.cs-neverdecline {
+  margin-top: 12px; padding: 9px 12px;
+  background: #FFF8E6; border: 1px solid #F5DFA5; border-radius: 8px;
+  font-size: 11.5px; color: #7A5B12; line-height: 1.5;
 }
 
 /* ---------- Reason codes on rule rows ---------- */

@@ -4,6 +4,14 @@ function initials(name) {
   return name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?';
 }
 
+function makeColdStart(prefix, seed) {
+  const cs = structuredClone(seed || COLDSTART_BLANK);
+  cs.gates = (cs.gates || []).map((g, j) => ({
+    id: `${prefix}cg${j}`, param: g[0], op: g[1], value: g[2], locked: !!g[3], note: g[4] || '',
+  }));
+  return cs;
+}
+
 function makeFallback(prefix, blank) {
   if (blank) return { entries: [], tiers: { fullMin: 4, partialMin: 2, thinCeiling: 0, zeroMin: 0 } };
   const fb = structuredClone(FALLBACK_SEED);
@@ -36,6 +44,7 @@ function makeProfile(seed, idx) {
       bands: structuredClone(seed.bands),
       open: { ...DEFAULT_OPEN },
       fallback: makeFallback(`p${idx}`, seed.blank),
+      coldStart: makeColdStart(`p${idx}`, seed.coldStart),
       limits: structuredClone(seed.limits),
       touched: { ...(seed.touched || { simulate: false }) },
     },
@@ -1261,9 +1270,51 @@ function fbPreviewState() {
     cfg().fallback.entries.forEach(e => {
       if (!e.banded && e.enabled && (e.param === 'kyc' || e.param === 'tenure')) checks[e.id] = true;
     });
-    state.fbPreview = { checks, income: '120' };
+    // Cold-start gates start "met" so the default preview shows the starter offer
+    // rather than an immediate defer.
+    const gates = {};
+    cfg().coldStart.gates.forEach(g => { gates[g.id] = true; });
+    state.fbPreview = { checks, income: '120', gates };
   }
   return state.fbPreview;
+}
+
+/* ---------- Cold-start / no-data path ---------- */
+
+// Evaluated only when the customer has no usable data at all. Light gates are a
+// separate, data-light list; failing one defers, it never declines permanently.
+function coldStartCompute() {
+  const cs = cfg().coldStart;
+  const pv = fbPreviewState();
+  const met = [], failed = [];
+  cs.gates.forEach(g => (pv.gates[g.id] === false ? failed : met).push(g));
+  const blockedBy = failed.filter(g => g.locked);
+  const passes = failed.length === 0;
+
+  const st = cs.starter;
+  const nano = Number(st.nanoAmount) || 0;
+  const deposit = Number(st.depositPct) || 0;
+  const offers = [];
+  if (passes && (st.type === 'nano' || st.type === 'both') && nano > 0) {
+    offers.push(`$${nano} nano-limit`);
+  }
+  if (passes && (st.type === 'deposit' || st.type === 'both') && deposit > 0) {
+    offers.push(`device with ${deposit}% down payment`);
+  }
+
+  const d = new Date();
+  d.setDate(d.getDate() + (Number(cs.defer.retryDays) || 0));
+  const retryOn = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  return {
+    met, failed, blockedBy, passes, offers, retryOn,
+    retryDays: Number(cs.defer.retryDays) || 0,
+    deviceLock: !!st.deviceLock,
+    onTimeRequired: Number(cs.graduation.onTimeRequired) || 0,
+    // Passing the gates but having nothing configured to offer is still a defer,
+    // not a decline.
+    outcome: passes ? (offers.length ? 'starter' : 'defer-unconfigured') : 'defer',
+  };
 }
 
 function fbCompute() {
@@ -1373,6 +1424,217 @@ function renderFallback() {
       <span>${esc(labelOf(e.param))} <span style="color:#667085;">${esc(SENT_OP[e.op] || e.op)} ${esc(e.value)}</span> <strong style="color:#144989;">+${esc(e.points)}</strong></span>
     </label>`).join('');
 
+  /* ---------- Cold-start / no-data policy ---------- */
+  const cs = cfg().coldStart;
+  const cold = coldStartCompute();
+
+  const gateRow = (g) => {
+    const opts = paramsForSection('coldstart');
+    const valid = opts.some(d => d.key === g.param);
+    return `
+    <div class="cs-gate${g.locked ? ' is-locked' : ''}">
+      <div class="cs-gate-main">
+        ${g.locked
+          ? `<span class="cs-lock" title="Non-negotiable: cannot be waived" aria-label="Non-negotiable gate, locked">🔒</span>`
+          : `<span class="cs-lock cs-lock-open" aria-hidden="true">·</span>`}
+        <select class="fb-signal" data-change="cs-param" data-gate="${g.id}" ${g.locked ? 'disabled' : ''}
+          aria-label="Parameter for light entry gate">
+          ${opts.map(d => `<option value="${esc(d.key)}"${d.key === g.param ? ' selected' : ''}>${esc(d.label)}</option>`).join('')}
+          ${valid ? '' : `<option value="${esc(g.param)}" selected>${esc(labelOf(g.param))} (not valid here)</option>`}
+        </select>
+        <select class="fb-op" data-change="cs-op" data-gate="${g.id}" ${g.locked ? 'disabled' : ''}
+          aria-label="Test for light entry gate">${optionGroup(operatorsForParam(g.param), g.op)}</select>
+        <input class="fb-value" value="${esc(g.value)}" data-change="cs-value" data-gate="${g.id}" ${g.locked ? 'disabled' : ''}
+          aria-label="Value for light entry gate" />
+        ${g.locked
+          ? `<span class="cs-badge">Non-negotiable</span>`
+          : `<button class="rule-remove" data-action="cs-remove" data-gate="${g.id}" aria-label="Remove light entry gate">×</button>`}
+      </div>
+      ${g.note ? `<div class="cs-gate-note">${esc(g.note)}</div>` : ''}
+    </div>`;
+  };
+
+  const starterButtons = STARTER_TYPES.map(([k, label]) => `
+    <button type="button" class="cs-type${cs.starter.type === k ? ' on' : ''}" data-action="cs-type" data-type="${k}"
+      aria-pressed="${cs.starter.type === k ? 'true' : 'false'}">${esc(label)}</button>`).join('');
+
+  const csNum = (field, val, pre, suf, label) => `
+    <span class="val-num lim-num">
+      ${pre ? `<span class="val-affix">${pre}</span>` : ''}
+      <input type="number" min="0" class="val-input" value="${esc(val)}" data-change="cs-field" data-field="${field}"
+        aria-label="${esc(label)}" />
+      ${suf ? `<span class="val-unit">${suf}</span>` : ''}
+    </span>`;
+
+  const showNano = cs.starter.type === 'nano' || cs.starter.type === 'both';
+  const showDeposit = cs.starter.type === 'deposit' || cs.starter.type === 'both';
+
+  const coldStartSection = `
+  <h2 class="page-title" style="font-size:18px;margin-top:30px;">Cold-start / no-data policy</h2>
+  <p class="page-desc" style="max-width:820px;">Having <em>little</em> data and having <em>no</em> data are different problems. With no data at all, every gate that needs data cannot be answered, so a customer would fail all of them and be shut out permanently. This policy is the lighter path that stops that happening.</p>
+  <div class="cs-principle">Absence of data must never produce a permanent decline.</div>
+
+  <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:16px;align-items:start;margin-top:16px;">
+    <div style="display:flex;flex-direction:column;gap:16px;">
+
+      <div class="card panel">
+        <h3 class="panel-title">Missing data is "unknown", not "fail"</h3>
+        <div class="tighten-row" style="margin-top:12px;">
+          <button class="switch switch-lg${cs.unknownIsNotFail ? ' on' : ''}" data-action="cs-unknown"
+            role="switch" aria-checked="${cs.unknownIsNotFail ? 'true' : 'false'}"
+            aria-label="Treat a gate that cannot be evaluated as unknown and route to the cold-start path, rather than failing it"><span class="knob"></span></button>
+          <div>
+            <div class="tighten-title">Route "unknown" to the cold-start path</div>
+            <div class="tighten-sub">${cs.unknownIsNotFail
+              ? 'A gate that cannot be evaluated because the data is missing returns <strong>unknown</strong>. Unknown is sent down the light path below, not counted as a failure.'
+              : '<strong>Warning:</strong> unknown currently counts as a failure. A customer with no data will fail every gate and be declined with no way back. This is the cold-start trap.'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <h3 class="panel-title">Light entry gates</h3>
+        <div class="panel-sub" style="margin-bottom:10px;">Used only when there is no reliable score. A separate, shorter list from the scored path's <span class="nav-link" data-tab="rules">eligibility gates</span>, drawn only from identity and eligibility details a brand-new customer can actually satisfy.</div>
+        ${cs.gates.map(gateRow).join('')}
+        <div style="margin-top:12px;">
+          <button class="add-rule" data-action="cs-add">+ Add light gate</button>
+        </div>
+        <div class="cs-locknote">🔒 KYC and fraud / AML are non-negotiable. They stay on, cannot be edited away, and cannot be waived by taking a deposit.</div>
+      </div>
+
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;">
+
+      <div class="card panel">
+        <h3 class="panel-title">Starter offer</h3>
+        <div class="panel-sub" style="margin-bottom:10px;">What a customer who clears the light gates is offered.</div>
+        <div class="cs-types" role="group" aria-label="Starter offer type">${starterButtons}</div>
+        ${showNano ? `
+        <div class="field-row">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label">Fixed nano-limit</div>
+            <div class="field-hint">A small cash limit, no deposit required.</div>
+          </div>
+          ${csNum('nanoAmount', cs.starter.nanoAmount, '$', '', 'Fixed nano-limit amount in US dollars')}
+        </div>` : ''}
+        ${showDeposit ? `
+        <div class="field-row">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label">Required down payment</div>
+            <div class="field-hint">Share of the device price paid upfront to open the account.</div>
+          </div>
+          ${csNum('depositPct', cs.starter.depositPct, '', '%', 'Required down payment percentage')}
+        </div>` : ''}
+        <div class="field-row" style="border-bottom:none;">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label">Require device-lock / IMEI control</div>
+            <div class="field-hint">The handset can be locked remotely while a starter offer is outstanding.</div>
+          </div>
+          <button class="switch switch-lg${cs.starter.deviceLock ? ' on' : ''}" data-action="cs-devicelock"
+            role="switch" aria-checked="${cs.starter.deviceLock ? 'true' : 'false'}"
+            aria-label="Require device-lock or IMEI control for starter offers"><span class="knob"></span></button>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <h3 class="panel-title">Graduation</h3>
+        <div class="panel-sub" style="margin-bottom:10px;">How a starter customer earns their way onto the normal path.</div>
+        <div class="field-row">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label">On-time repayments required</div>
+            <div class="field-hint">After this many, the customer is scored normally and enters the <span class="nav-link" data-action="cs-goto-ladder">Credit ladder</span>.</div>
+          </div>
+          ${csNum('onTimeRequired', cs.graduation.onTimeRequired, '', 'repayments', 'On-time repayments required before normal scoring')}
+        </div>
+      </div>
+
+      <div class="card panel">
+        <h3 class="panel-title">If the light gates are not met</h3>
+        <div class="panel-sub" style="margin-bottom:10px;">The outcome is a defer, meaning "not yet". It is never a permanent decline.</div>
+        <div class="field-row" style="border-bottom:none;">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label">Re-try horizon</div>
+            <div class="field-hint">The customer is invited back after this long, and is told so.</div>
+          </div>
+          ${csNum('retryDays', cs.defer.retryDays, '', 'days', 'Re-try horizon in days before the customer may apply again')}
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+
+  /* ---------- Shared live preview ---------- */
+  const isColdPath = r.tier === 'zero';
+
+  const coldGateChecks = cs.gates.map(g => `
+    <label class="fb-check">
+      <input type="checkbox" data-change="cs-check" data-gate="${g.id}" ${pv.gates[g.id] === false ? '' : 'checked'}
+        aria-label="Sample customer meets ${esc(labelOf(g.param))} ${esc(SENT_OP[g.op] || g.op)} ${esc(g.value)}" />
+      <span>${g.locked ? '🔒 ' : ''}${esc(labelOf(g.param))} <span style="color:#667085;">${esc(SENT_OP[g.op] || g.op)} ${esc(g.value)}</span></span>
+    </label>`).join('');
+
+  const coldResult = `
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+      <span class="chip" style="background:${cold.outcome === 'starter' ? '#ECFDF3' : '#FFF8E6'};color:${cold.outcome === 'starter' ? '#067647' : '#7A5B12'};border:1px solid ${cold.outcome === 'starter' ? '#ABEFC6' : '#F5DFA5'};">
+        ${cold.outcome === 'starter' ? 'Starter offer' : 'Defer, not declined'}
+      </span>
+      <span class="chip" style="background:rgba(72,194,207,0.14);color:#144989;border:1px solid rgba(72,194,207,0.5);">score_source: rule-based fallback</span>
+    </div>
+    <div class="fb-result-row"><span>Path taken</span><strong>No usable data, so the cold-start path</strong></div>
+    <div class="fb-result-row"><span>Light gates</span><strong>${cold.met.length} of ${cs.gates.length} met${cold.failed.length ? `, failed: ${esc(cold.failed.map(g => labelOf(g.param)).join(', '))}` : ''}</strong></div>
+    ${cold.outcome === 'starter' ? `
+      <div class="fb-result-row"><span>Starter offer</span><strong>${esc(cold.offers.join(' or '))}</strong></div>
+      <div class="fb-result-row"><span>Device lock</span><strong>${cold.deviceLock ? 'Required while outstanding' : 'Not required'}</strong></div>
+      <div class="fb-result-row"><span>Graduation</span><strong>${cold.onTimeRequired} on-time repayments, then scored normally</strong></div>
+    ` : `
+      <div class="fb-result-row"><span>Outcome</span><strong>Defer for ${cold.retryDays} days, invite back on ${esc(cold.retryOn)}</strong></div>
+      ${cold.blockedBy.length ? `<div class="fb-result-row"><span>Blocked by</span><strong>${esc(cold.blockedBy.map(g => labelOf(g.param)).join(', '))} (non-negotiable, no deposit waives this)</strong></div>` : ''}
+      ${cold.outcome === 'defer-unconfigured' ? `<div class="fb-result-row"><span>Note</span><strong>Gates are met but no starter offer is configured yet</strong></div>` : ''}
+    `}
+    <div class="fb-result-row"><span>Probability of default</span><strong>n/a <span style="font-weight:500;color:#667085;">no data to calibrate against</span></strong></div>
+    <div class="cs-neverdecline">This is a deferral, not a decline. The customer is never permanently excluded for lacking data.</div>`;
+
+  const pointsResult = `
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+      <span style="font-size:30px;font-weight:700;color:#101828;font-variant-numeric:tabular-nums;">${r.score}</span>
+      <span class="chip" style="background:${BAND_COLORS[r.bandIdx]};color:${inkOn(BAND_COLORS[r.bandIdx])};border:1px solid ${BAND_COLORS[r.bandIdx]};">${esc(r.band.label)}</span>
+      <span class="chip" style="background:rgba(72,194,207,0.14);color:#144989;border:1px solid rgba(72,194,207,0.5);">score_source: rule-based fallback</span>
+    </div>
+    <div class="fb-result-row"><span>Path taken</span><strong>Points scorecard</strong></div>
+    <div class="fb-result-row"><span>Coverage tier</span><strong>${tierLabel} · ${r.signals} signal${r.signals === 1 ? '' : 's'}</strong></div>
+    <div class="fb-result-row"><span>Recommended limit</span><strong>${esc(r.limit)}</strong></div>
+    <div class="fb-result-row"><span>Affordability ceiling</span><strong>${esc(r.afford)}</strong></div>
+    <div class="fb-result-row"><span>Probability of default</span><strong>n/a <span style="font-weight:500;color:#667085;">points scorecard, not a calibrated probability</span></strong></div>`;
+
+  const previewPanel = `
+  <div class="card panel" style="margin-top:16px;">
+    <h2 class="panel-title">Live preview: sample customer</h2>
+    <div class="panel-sub" style="margin-bottom:10px;">Untick everything and clear the income to see a customer with no data at all, and the cold-start path they take instead.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1.1fr;gap:20px;align-items:start;">
+      <div>
+        <div class="cs-preview-head">Signals held${isColdPath ? ' <span class="cs-dim">(not used on this path)</span>' : ''}</div>
+        <div${isColdPath ? ' class="cs-dim-block"' : ''}>
+          ${previewChecks}
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+            <span style="font-size:12.5px;color:#344054;font-weight:600;">Income</span>
+            <span style="font-size:12.5px;color:#667085;">$</span>
+            <input class="fb-tier-input" style="width:64px;" value="${esc(pv.income)}" data-change="fb-income" placeholder="n/a"
+              aria-label="Sample customer's inferred monthly income in US dollars: leave blank for unknown" />
+            <span style="font-size:11.5px;color:#667085;">blank = unknown</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="cs-preview-head">Light gates met${isColdPath ? '' : ' <span class="cs-dim">(not used on this path)</span>'}</div>
+        <div${isColdPath ? '' : ' class="cs-dim-block"'}>${coldGateChecks}</div>
+      </div>
+      <div style="border-left:1px solid #F2F4F7;padding-left:20px;">
+        ${isColdPath ? coldResult : pointsResult}
+      </div>
+    </div>
+  </div>`;
+
   return `
   <h1 class="page-title">Fallback scorecard</h1>
   <p class="page-desc" style="max-width:760px;">Some customers are too new to score, because the model has nothing to work with. Rather than turn them away, this scorecard gives points for whatever they <em>can</em> show, adds the points up, and treats the total as a score.</p>
@@ -1414,31 +1676,12 @@ function renderFallback() {
         ${tierRow('Thin-file ceiling', 'Hard cap on any fallback-scored offer.', numInput('thinCeiling', t.thinCeiling, '$'))}
       </div>
 
-      <div class="card panel">
-        <h2 class="panel-title">Live preview: sample customer</h2>
-        <div class="panel-sub" style="margin-bottom:8px;">Tick the signals this customer has.</div>
-        ${previewChecks}
-        <div style="display:flex;align-items:center;gap:8px;margin:10px 0 14px 0;">
-          <span style="font-size:12.5px;color:#344054;font-weight:600;">Inferred monthly income</span>
-          <span style="font-size:12.5px;color:#667085;">$</span>
-          <input class="fb-tier-input" style="width:70px;" value="${esc(pv.income)}" data-change="fb-income" placeholder="n/a"
-            aria-label="Sample customer's inferred monthly income in US dollars: leave blank for unknown" />
-          <span style="font-size:11.5px;color:#667085;">blank = unknown</span>
-        </div>
-        <div style="border-top:1px solid #F2F4F7;padding-top:12px;">
-          <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
-            <span style="font-size:30px;font-weight:700;color:#101828;font-variant-numeric:tabular-nums;">${r.score}</span>
-            <span class="chip" style="background:${BAND_COLORS[r.bandIdx]};color:${inkOn(BAND_COLORS[r.bandIdx])};border:1px solid ${BAND_COLORS[r.bandIdx]};">${esc(r.band.label)}</span>
-            <span class="chip" style="background:rgba(72,194,207,0.14);color:#144989;border:1px solid rgba(72,194,207,0.5);">score_source: rule-based fallback</span>
-          </div>
-          <div class="fb-result-row"><span>Coverage tier</span><strong>${tierLabel} · ${r.signals} signal${r.signals === 1 ? '' : 's'}</strong></div>
-          <div class="fb-result-row"><span>Recommended limit</span><strong>${esc(r.limit)}</strong></div>
-          <div class="fb-result-row"><span>Affordability ceiling</span><strong>${esc(r.afford)}</strong></div>
-          <div class="fb-result-row"><span>Probability of default</span><strong>n/a <span style="font-weight:500;color:#667085;">points scorecard, not a calibrated probability</span></strong></div>
-        </div>
-      </div>
     </div>
-  </div>`;
+  </div>
+
+  ${coldStartSection}
+
+  ${previewPanel}`;
 }
 
 /* ---------- Setup progress ---------- */
@@ -2327,6 +2570,44 @@ document.addEventListener('click', (e) => {
     case 'fb-add':
       cfg().fallback.entries.push({ id: 'fn' + Date.now(), param: 'tenure', op: 'gte', value: '6 months', points: 50, note: '', enabled: true });
       markDirty(); render(); break;
+
+    /* ---------- Cold-start policy ---------- */
+    case 'cs-unknown':
+      cfg().coldStart.unknownIsNotFail = !cfg().coldStart.unknownIsNotFail;
+      announce(cfg().coldStart.unknownIsNotFail
+        ? 'Unknown is routed to the cold-start path.'
+        : 'Warning: unknown now counts as a failure, which can exclude a customer permanently.');
+      markDirty(); render(); break;
+    case 'cs-add': {
+      const d = paramsForSection('coldstart')[0];
+      const ops = TYPE_OPERATORS[d ? d.type : ''] || ['gte'];
+      cfg().coldStart.gates.push({
+        id: 'cg' + Date.now(), param: d ? d.key : '', op: ops[0],
+        value: d && d.type === 'category' ? (d.values || [''])[0] : joinValue('', '0', d && d.unit ? d.unit : ''),
+        locked: false, note: '',
+      });
+      markDirty(); render(); break;
+    }
+    case 'cs-remove': {
+      const g = cfg().coldStart.gates.find(x => x.id === el.dataset.gate);
+      // Non-negotiable gates are not removable, whatever the DOM says.
+      if (g && !g.locked) {
+        cfg().coldStart.gates = cfg().coldStart.gates.filter(x => x.id !== g.id);
+        markDirty();
+      }
+      render(); break;
+    }
+    case 'cs-type':
+      cfg().coldStart.starter.type = el.dataset.type;
+      markDirty(); render(); break;
+    case 'cs-devicelock':
+      cfg().coldStart.starter.deviceLock = !cfg().coldStart.starter.deviceLock;
+      markDirty(); render(); break;
+    case 'cs-goto-ladder':
+      cfg().open.ladder = true;
+      state.profileTab = 'rules';
+      announce('Opened the Credit ladder section in Rules.');
+      render(); break;
     case 'di-sample':
       state.diSample = Number(el.dataset.idx); render(); break;
     case 'setup-step': {
@@ -2445,6 +2726,7 @@ document.addEventListener('click', (e) => {
           bands: structuredClone(EMPTY_BANDS),
           open: { ...DEFAULT_OPEN },
           fallback: makeFallback('n' + Date.now(), true),
+          coldStart: makeColdStart('n' + Date.now(), COLDSTART_BLANK),
           limits: structuredClone(LIMITS_EMPTY),
           touched: { simulate: false },
         },
@@ -2582,6 +2864,32 @@ document.addEventListener('change', (e) => {
       render(); break;
     case 'fb-income':
       fbPreviewState().income = el.value.trim();
+      render(); break;
+    case 'cs-param': case 'cs-op': case 'cs-value': {
+      const g = cfg().coldStart.gates.find(x => x.id === el.dataset.gate);
+      if (g && !g.locked) {
+        if (kind === 'cs-param') {
+          g.param = el.value;
+          const d = paramDef(g.param);
+          const ops = TYPE_OPERATORS[d ? d.type : ''] || [];
+          if (ops.length && !ops.includes(g.op)) g.op = ops[0];
+          if (d && d.type === 'category' && !(d.values || []).includes(g.value)) g.value = (d.values || [''])[0];
+        } else {
+          g[kind === 'cs-op' ? 'op' : 'value'] = el.value;
+        }
+        markDirty();
+      }
+      render(); break;
+    }
+    case 'cs-field': {
+      const f = el.dataset.field;
+      const cs = cfg().coldStart;
+      const target = f === 'onTimeRequired' ? cs.graduation : (f === 'retryDays' ? cs.defer : cs.starter);
+      target[f] = cleanNum(el, target[f]);
+      markDirty(); render(); break;
+    }
+    case 'cs-check':
+      fbPreviewState().gates[el.dataset.gate] = el.checked;
       render(); break;
     case 'rc-label': case 'rc-consumer': {
       const c = rcByCode(el.dataset.code);

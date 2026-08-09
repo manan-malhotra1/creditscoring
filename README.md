@@ -20,7 +20,8 @@ a selected profile, as a numbered set-up sequence:
 - **Fraud lists**, **Reason-code catalogue**, **Users & audit**
 
 **A product profile**: its own rules, bands, limits and version history
-1. **Fallback scorecard**: points-based scoring for customers the model cannot score
+1. **Fallback scorecard**: points-based scoring for customers the model cannot score,
+   plus the cold-start / no-data policy for customers who have no data at all
 2. **Score bands**: turn the score into a decision and a starting limit
 3. **Limits & affordability**: the score × affordability matrix, caps and ceilings
 4. **Rules**: plain-sentence rules, scoped per section
@@ -42,6 +43,11 @@ a selected profile, as a numbered set-up sequence:
   disagree. The book projection is capped by the profile's own launch maximum.
 - **Ink is chosen from the fill.** Band labels pick dark or light text from the
   band colour's luminance, so labels stay legible if the palette changes.
+- **No data is never a permanent decline.** A gate that cannot be evaluated
+  returns "unknown", not "fail", and unknown routes to a lighter set of entry
+  gates. Clearing those earns a starter offer; failing them defers the customer
+  to a re-try date. KYC and fraud / AML are the only non-negotiable gates and
+  cannot be waived by taking a deposit.
 
 ## Running locally
 
