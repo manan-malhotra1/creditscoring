@@ -2534,8 +2534,11 @@ function goToTab(key) {
 // render() replaces innerHTML wholesale, which would drop focus to <body> after
 // every edit and eject a keyboard user to the top of the document. Identify the
 // focused control by its data-* signature, then restore it afterwards.
+// Must cover every data-* attribute that identifies a control, or the signature
+// matches several elements and focus lands on the wrong one, or on a disabled one.
 const FOCUS_KEYS = ['change', 'action', 'input', 'nav', 'tab', 'step', 'section',
-  'rule', 'entry', 'key', 'code', 'param', 'list', 'field', 'col', 'row', 'val', 'idx', 'handle'];
+  'rule', 'entry', 'gate', 'key', 'code', 'param', 'list', 'field', 'col', 'row',
+  'val', 'type', 'idx', 'handle'];
 
 function focusSignature(el) {
   if (!el || el === document.body || !$view.contains(el)) return null;
@@ -2553,7 +2556,8 @@ function focusSignature(el) {
 function restoreFocus(sig) {
   if (!sig) return;
   const el = $view.querySelector(sig.selector);
-  if (!el) return;
+  // A disabled match would silently swallow the focus and leave it on <body>.
+  if (!el || el.disabled) return;
   el.focus({ preventScroll: true });
   // Text-like inputs only: putting the caret back where it was.
   if (sig.start != null && typeof el.setSelectionRange === 'function') {

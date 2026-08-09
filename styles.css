@@ -866,7 +866,7 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
 }
 .fork-panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .fork-if {
-  font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
   color: #fff; background: #172E7B; padding: 3px 10px; border-radius: 20px;
 }
 .fork-panel-sub { font-size: 12.5px; color: #344054; }
@@ -891,7 +891,7 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
 .fork-col-note { margin-top: 8px; font-size: 11.5px; color: #667085; font-style: italic; }
 .fork-or {
   align-self: center; flex: 0 0 auto;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
   color: #667085; background: #fff; border: 1px solid #D0D5DD;
   padding: 5px 10px; border-radius: 20px;
 }
@@ -950,7 +950,7 @@ h1, h2, h3, h4, h5, h6 { margin: 0; font-size: inherit; font-weight: inherit; }
 .cs-types { margin: 0 0 12px 0; }
 
 .cs-preview-head {
-  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.5px;
   text-transform: uppercase; color: #667085; margin-bottom: 8px;
 }
 .cs-dim { font-weight: 500; text-transform: none; letter-spacing: 0; color: #667085; }
