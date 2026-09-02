@@ -1652,7 +1652,7 @@ function settingEditor(layerKey, d) {
   const step = d.type === 'ratio' ? '0.05' : (d.type === 'percent' ? '0.5' : '1');
   return `<span class="val-num lim-num">
     ${affix ? `<span class="val-affix">${affix}</span>` : ''}
-    <input type="number" min="0" step="${step}" class="val-input" value="${esc(val ?? '')}" placeholder="—"
+    <input type="number" min="0" step="${step}" class="val-input" value="${esc(val ?? '')}" placeholder="not set"
       ${common} aria-label="${esc(name)}" />
     ${unit ? `<span class="val-unit">${esc(unit)}</span>` : ''}
   </span>`;
@@ -1749,6 +1749,27 @@ function conditionRow(r, layerKey) {
 
 /* ---------- Score bands ---------- */
 
+
+// L5 owns which repayment periods may be offered at all. A band picks from that
+// list rather than holding a free number, so an unofferable term is impossible.
+function permittedTerms() {
+  const raw = String(settingValue('l5', 'permittedTenures') || '');
+  const nums = (raw.match(/\d+/g) || []).map(Number).filter(n => n > 0);
+  return [...new Set(nums)].sort((a, b) => a - b);
+}
+
+// L5's deposit floor is a minimum applied whatever the band says, so the floor
+// wins when it is higher. The band keeps its own value; this is what is offered.
+function effectiveDeposit(b) {
+  const floor = Number(settingValue('l5', 'depositFloor'));
+  if (b.deposit == null) return null;
+  return isFinite(floor) ? Math.max(b.deposit, floor) : b.deposit;
+}
+function depositFloorBinds(b) {
+  const floor = Number(settingValue('l5', 'depositFloor'));
+  return b.deposit != null && isFinite(floor) && floor > b.deposit;
+}
+
 function renderBandTable() {
   const bands = cfg().bands;
   const s = state;
@@ -1786,12 +1807,24 @@ function renderBandTable() {
         <input type="number" min="0" max="1" step="0.05" class="val-input band-input" value="${b.multiplier}"
           data-change="band-multiplier" data-idx="${i}" aria-label="Limit multiplier for the ${esc(b.label)} band" />`}</div>
       <div style="font-size:13px;font-weight:600;color:#101828;font-variant-numeric:tabular-nums;">${esc(bandLimitLabel(b))}</div>
-      <div>${b.maxTenure == null ? '<span style="color:#667085;">n/a</span>' : `
-        <input type="number" min="0" step="1" class="val-input band-input" value="${b.maxTenure}"
-          data-change="band-tenure" data-idx="${i}" aria-label="Maximum tenure in months for the ${esc(b.label)} band" />`}</div>
+      <div>${b.maxTenure == null ? '<span style="color:#667085;">n/a</span>' : (() => {
+        const terms = permittedTerms();
+        // Until L5 says which terms may be offered there is nothing to check a
+        // band against, so an unset list is treated as "not constrained yet"
+        // rather than as every band being wrong.
+        const ok = !terms.length || terms.includes(Number(b.maxTenure));
+        return `<select class="band-input${ok ? '' : ' field-invalid'}" data-change="band-tenure" data-idx="${i}"
+          aria-label="Maximum loan term for the ${esc(b.label)} band, chosen from the terms permitted at L5">
+          ${terms.map(t => `<option value="${t}"${Number(b.maxTenure) === t ? ' selected' : ''}>${t} mo</option>`).join('')}
+          ${terms.includes(Number(b.maxTenure)) ? '' : `<option value="${esc(b.maxTenure)}" selected>${esc(b.maxTenure)} mo${terms.length ? ' (not permitted)' : ''}</option>`}
+        </select>`;
+      })()}</div>
       <div>${b.deposit == null ? '<span style="color:#667085;">n/a</span>' : `
-        <input type="number" min="0" max="100" step="5" class="val-input band-input" value="${b.deposit}"
-          data-change="band-deposit" data-idx="${i}" aria-label="Deposit percentage for the ${esc(b.label)} band" />`}</div>
+        <span class="dep-cell">
+          <input type="number" min="0" max="100" step="5" class="val-input band-input" value="${b.deposit}"
+            data-change="band-deposit" data-idx="${i}" aria-label="Deposit percentage for the ${esc(b.label)} band" />
+          ${depositFloorBinds(b) ? `<span class="dep-floor" title="The L5 deposit floor is higher than this band's own figure, so the floor is what is offered">floor ${effectiveDeposit(b)}%</span>` : ''}
+        </span>`}</div>
       <div style="font-size:13px;color:#344054;font-variant-numeric:tabular-nums;">${stats[i].badRate == null ? 'n/a' : stats[i].badRate + '%'}</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <div class="pop-track"><div class="pop-fill" style="width:${stats[i].pop * 2.6}%;background:${BAND_COLORS[i]};"></div></div>
@@ -1821,7 +1854,7 @@ function renderBandTable() {
     </div>
     ${rows}
   </div>
-  <div style="margin-top:10px;font-size:11.5px;color:#667085;">Bad rate is measured by the shared model; use it to justify where each band floor sits. Limit is the multiplier applied to the product maximum, rounded by the L5 rounding rule.</div>`;
+  <div style="margin-top:10px;font-size:11.5px;color:#667085;">Bad rate is measured by the shared model; use it to justify where each band floor sits. Limit is the multiplier applied to the product maximum, rounded by the L5 rounding rule. Loan terms are chosen from the terms permitted at <span class="nav-link" data-layer="l5">L5</span>, and the L5 deposit floor overrides a band deposit that sits below it.</div>`;
 }
 
 

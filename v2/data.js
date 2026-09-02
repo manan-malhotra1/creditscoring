@@ -516,7 +516,7 @@ const LAYER_SEEDS = {
     l4: { instalmentToIncome: '15', disposableFloor: '10', deductObligations: true, incomeStability: '0.6',
           minIncome: '40', incomeConfidence: '70', incomeHaircut: '25', incomeMethod: '30-day median inflow' },
     l5: { productMaximum: '15', minViableLimit: '1', customerExposureCap: '750',
-          limitRounding: 'Nearest $1, rounded down', depositFloor: '0', permittedTenures: 'Single repayment, 30 days' },
+          limitRounding: 'Nearest $1, rounded down', depositFloor: '0', permittedTenures: '1 month, repaid in full' },
     l6: { thinFileShare: '60', dailyDisbursementCap: '', newToCreditCap: '60', autoTighten: 'Tighten by one band',
           killSwitch: false, randomHoldout: '2', seasonalityWindows: 'January, May, September', macroTightening: 'Off' },
   },
