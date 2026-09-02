@@ -19,14 +19,14 @@ a selected profile, as a numbered set-up sequence:
   tagged with the sections it is valid in
 - **Fraud lists**, **Reason-code catalogue**, **Users & audit**
 
-**A product profile**: its own rules, bands, limits and version history
-1. **Fallback scorecard**: points-based scoring for customers the model cannot score,
-   plus the cold-start / no-data policy for customers who have no data at all
-2. **Score bands**: turn the score into a decision and a starting limit
-3. **Limits & affordability**: the score × affordability matrix, caps and ceilings
-4. **Rules**: plain-sentence rules, scoped per section
-5. **What-if simulation**: projected impact, derived from the profile's own bands
-6. **Publish**: gated until steps 1–4 are configured, then sent to a checker
+**A product profile**: its own parameters, bands and version history, organised as
+the decision waterfall from the Technodysis rule engine draft
+1. **Decision waterfall**, L0 to L6, in the order the engine evaluates them:
+   L0 data sufficiency and routing, L1 hard knockouts, L2 fraud and
+   first-payment-default screens, L3 score decisioning and thin-file handling,
+   L4 affordability, L5 exposure and limit assignment, L6 portfolio controls
+2. **What-if simulation**: projected impact, derived from the profile's own bands
+3. **Publish**: gated until every parameter has a value, then sent to a checker
 
 ## Design decisions worth knowing
 
@@ -43,6 +43,18 @@ a selected profile, as a numbered set-up sequence:
   disagree. The book projection is capped by the profile's own launch maximum.
 - **Ink is chosen from the fill.** Band labels pick dark or light text from the
   band colour's luminance, so labels stay legible if the palette changes.
+- **The waterfall is the organising principle.** Layers, numbering and parameter
+  names follow the Technodysis rule engine draft, so the credit team can work
+  through that document and this console side by side. Two invariants are shown
+  on the screen: any layer can stop the process, and limits only ever go down.
+- **Band limits are multipliers, not amounts.** A band carries a multiplier of
+  the product maximum plus its own maximum tenure and deposit, so changing the
+  product maximum rescales every band at once.
+- **Unset parameters are counted, not hidden.** Anything still needing a value
+  from the credit team is tagged, filterable, and blocks publication.
+- **Overlaps are flagged, not resolved.** Account age is gated in L0, L1 and L2
+  for three different reasons; the console surfaces all four places rather than
+  silently letting the strictest win.
 - **No data is never a permanent decline.** A gate that cannot be evaluated
   returns "unknown", not "fail", and unknown routes to a lighter set of entry
   gates. Clearing those earns a starter offer; failing them defers the customer
