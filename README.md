@@ -15,7 +15,7 @@ The site serves both structures so they can be compared:
 |---|---|---|
 | [`/`](https://credit-rule-console.web.app/) | Chooser | Side-by-side summary of what differs |
 | [`/v1/`](https://credit-rule-console.web.app/v1/) | Six-tab build | Configuration grouped by topic, roughly 40 parameters |
-| [`/v2/`](https://credit-rule-console.web.app/v2/) | L0 to L6 waterfall | One spine in evaluation order, roughly 80 parameters |
+| [`/v2/`](https://credit-rule-console.web.app/v2/) | L0 to L6 waterfall | One spine in evaluation order, roughly 80 parameters, plus a single-customer assessment |
 
 v1 is the build as it stood at commit `63ce862`, kept unchanged apart from a
 corner badge for switching between the two. v2 is the current work and is where
@@ -40,8 +40,10 @@ the decision waterfall from the Technodysis rule engine draft
    L0 data sufficiency and routing, L1 hard knockouts, L2 fraud and
    first-payment-default screens, L3 score decisioning and thin-file handling,
    L4 affordability, L5 exposure and limit assignment, L6 portfolio controls
-2. **What-if simulation**: projected impact, derived from the profile's own bands
-3. **Publish**: gated until every parameter has a value, then sent to a checker
+2. **Assess a customer**: one applicant run down the whole waterfall, showing
+   which layer decided and which cap bound the limit
+3. **What-if simulation**: projected impact, derived from the profile's own bands
+4. **Publish**: gated until every parameter has a value, then sent to a checker
 
 ## Design decisions worth knowing
 
@@ -51,8 +53,12 @@ the decision waterfall from the Technodysis rule engine draft
   portfolio counter. Rename a parameter and every rule sentence updates.
 - **Reason codes are emitted, not authored.** Each rule carries the code the
   engine emits when that rule decides the outcome; the catalogue holds wording
-  only and decides nothing. The Decision explanation panel on What-if resolves
-  codes from the rules that actually fired.
+  only and decides nothing. Assess a customer resolves the code from whatever
+  actually stopped the application, so it can never disagree with the rules.
+- **The assessment is computed, not narrated.** Every threshold in the trace is
+  read from the profile's own draft. A check that cannot run says so: an unset
+  threshold is a gap in the configuration and a missing value is a gap in the
+  data, and neither is quietly treated as a pass.
 - **One source of truth for numbers.** The simulation's approval rate is computed
   from the same population weights the band table prints, so the two can never
   disagree. The book projection is capped by the profile's own launch maximum.

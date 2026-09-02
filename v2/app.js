@@ -47,7 +47,7 @@ function makeProfile(seed, idx) {
       coldStart: makeColdStart(`p${idx}`, seed.coldStart),
       layers: structuredClone(seed.layers || LAYER_SEEDS.blank),
       limits: structuredClone(seed.limits),
-      touched: { ...(seed.touched || { simulate: false }) },
+      touched: { simulate: false, assess: false, ...(seed.touched || {}) },
     },
   };
 }
@@ -71,7 +71,9 @@ const state = {
   simRun: null,              // { at, population } of the last simulation run
   simPopIdx: 0,
   fbPreview: null,           // fallback-scorecard sample customer (per open profile)
-  diSample: 0,               // selected sample in the Decision explanation preview
+  applicant: null,           // the customer being assessed, shared across profiles
+  presetIdx: 0,              // which preset the applicant was last loaded from
+  assessOpen: { l0: true },  // which layers of the trace are expanded
   layerShowAll: {},          // per layer: show every setting, not just essentials
   pathOpen: { scored: false, thin: false, insufficient: false },
   rowOpen: {},               // condition rows whose details are expanded
@@ -1027,101 +1029,893 @@ function renderSimulate() {
       <div class="blast-note">${esc(deltaSummary())} ${r.blast > 5 ? 'Above the 5% review threshold, so a checker sign-off is required.' : 'Below the 5% review threshold.'}</div>
     </div>
   </div>
-
-  ${renderDecisionExplanation()}`;
+`;
 }
 
-// Read-only: shows the reason codes the engine WOULD emit for a sample customer.
-// Codes are resolved from the rule that fired, never from a hand-authored map.
-function renderDecisionExplanation() {
-  const sample = SAMPLE_DECISIONS[state.diSample] || SAMPLE_DECISIONS[0];
-  const rules = cfg().rules;
-  const ruleByCode = (code) => rules.find(r => r.code === code);
 
-  const outcomeColors = {
-    decline: ['#FEF3F2', '#B42318', '#FECDCA'],
-    approve: ['#ECFDF3', '#067647', '#ABEFC6'],
-    refer: ['#EFF4FF', '#172E7B', '#C7D7FE'],
-    route: ['#FFF8E6', '#7A5B12', '#F5DFA5'],
-  }[sample.outcomeKind] || ['#F2F4F7', '#344054', '#E4E7EC'];
+/* ---------- Single-customer assessment: the engine ---------- */
 
-  const emitted = (code, source, note) => {
-    const c = rcByCode(code);
-    return `
-    <div class="di-emit">
-      <span class="rule-code">${esc(code || 'n/a')}</span>
-      <div style="flex:1;min-width:0;">
-        <div class="di-emit-label">${esc(c ? c.label : 'Code not found in the catalogue')}</div>
-        <div class="di-emit-source">${source}</div>
-        ${c && c.consumer ? `<div class="di-emit-consumer">Consumer message: “${esc(c.consumer)}”</div>` : `<div class="di-emit-consumer di-none">No consumer message. Administrator/agent only</div>`}
-      </div>
-      ${note ? `<span class="di-emit-note">${esc(note)}</span>` : ''}
-    </div>`;
+// One applicant run down L0 to L6, in the order the engine evaluates. The two
+// invariants shown on the waterfall govern the trace: any layer can stop it,
+// and the limit only ever goes down. Every threshold is read from this
+// profile's own configuration, so editing a setting changes this immediately.
+
+function applicantState() {
+  if (!state.applicant) {
+    state.applicant = { ...APPLICANT_BASE, ...APPLICANT_PRESETS[0].values };
+  }
+  return state.applicant;
+}
+
+// Applicant value as a number, or null when the field is blank. Blank means
+// "not known about this customer", which is never silently read as zero.
+function aNum(key) {
+  const v = applicantState()[key];
+  if (v === '' || v == null || v === false) return v === false ? 0 : null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+// Setting value as a number, or null when the credit team has not set it yet.
+function sNum(layerKey, key) {
+  const v = settingValue(layerKey, key);
+  if (v === '' || v == null || typeof v === 'boolean') return null;
+  const n = parseFloat(String(v).replace(/[$,%]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+const DAY_IN = { day: 1, days: 1, week: 7, weeks: 7, month: 30, months: 30, year: 365, years: 365 };
+function unitDays(u) { return DAY_IN[String(u || '').trim().toLowerCase().split(/\s+/)[0]] || null; }
+
+// Durations are written in whichever unit reads naturally where they are set:
+// a wallet age in days, an age in years, a cold-start gate in weeks. Both sides
+// of a comparison are converted to days once, here, rather than per rule.
+function durationDays(n, unit) {
+  const k = unitDays(unit);
+  return k == null || n == null ? null : n * k;
+}
+
+const MONEY_FMT = n => (Math.abs(n) >= 1000 ? '$' + n.toLocaleString('en-US') : '$' + n);
+
+function fmtAmount(n, type, unit) {
+  if (n == null) return 'not known';
+  if (type === 'currency') return MONEY_FMT(Math.round(n * 100) / 100);
+  if (type === 'percent') return n + '%';
+  if (type === 'days') return plural(n, 'day');
+  return unit ? `${n} ${unit}` : String(n);
+}
+
+// A check that cannot be run is reported as such. An unset threshold is a gap
+// in the configuration and a missing value is a gap in the data; neither is a
+// failure, and neither is quietly treated as a pass.
+function check(o) {
+  const { label, actual, threshold, dir, type, unit, effect, rc, why, blankMeans } = o;
+  const base = { label, why, effect: null, rc: null };
+  if (actual == null && blankMeans) {
+    return { ...base, state: 'ok', detail: blankMeans };
+  }
+  if (threshold == null) {
+    return { ...base, state: 'unset', detail: 'No threshold set yet, so this is not checked.' };
+  }
+  if (actual == null) {
+    return { ...base, state: 'unknown',
+      detail: cfg().coldStart.unknownIsNotFail
+        ? 'Not known for this customer. Unknown does not count as a failure.'
+        : 'Not known for this customer, and unknown counts as a failure here.',
+      ...(cfg().coldStart.unknownIsNotFail ? {} : { effect, rc }) };
+  }
+  const ok = dir === 'min' ? actual >= threshold : actual <= threshold;
+  return {
+    ...base, state: ok ? 'ok' : 'fail',
+    detail: `${fmtAmount(actual, type, unit)} against ${dir === 'min' ? 'a minimum of' : 'a maximum of'} ${fmtAmount(threshold, type, unit)}`,
+    effect: ok ? null : effect, rc: ok ? null : rc,
   };
+}
 
-  let body;
-  if (sample.outcomeKind === 'approve') {
-    const bound = ruleByCode(sample.boundRule);
-    body = `
-    <h3 class="di-group-label">Top contributing model factors</h3>
-    ${sample.factors.map((code, i) => {
-      const f = state.modelFactors.find(x => x.code === code);
-      return emitted(code, `Model factor${f ? ` · ${esc(labelOf(f.param))}` : ''}, mapped in Global setup`, `#${i + 1}`);
-    }).join('')}
-    <h3 class="di-group-label" style="margin-top:14px;">Constraint that bound the limit</h3>
-    ${bound
-      ? emitted(bound.rc, `Rule ${esc(bound.code)} fired: “${esc(sentence(bound))}”`, esc(sample.boundLabel))
-      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.boundRule)} is no longer in this profile, so no code is emitted.</div>`}`;
-  } else {
-    const fired = ruleByCode(sample.firedRule);
-    const isRoute = sample.outcomeKind === 'route';
-    const note = isRoute ? 'sent to the cold-start branch'
-      : (sample.outcomeKind === 'decline' ? 'stopped here' : 'routed to review');
-    body = `
-    <h3 class="di-group-label">${isRoute ? 'Rule that chose the branch' : 'Rule that determined the outcome'}</h3>
-    ${fired
-      ? emitted(fired.rc, `Rule ${esc(fired.code)} fired: “${esc(sentence(fired))}”`, note)
-      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.firedRule)} is no longer in this profile, so no code is emitted.</div>`}
-    <h3 class="di-group-label" style="margin-top:14px;">Model factors</h3>
-    <div class="di-emit di-none" style="padding:12px 14px;">${isRoute
-      ? 'Not evaluated. There was not enough data to trust a score, which is why the customer was routed rather than scored.'
-      : 'Not evaluated. The application stopped before scoring, so no factor codes are emitted.'}</div>
-    ${isRoute ? `<h3 class="di-group-label" style="margin-top:14px;">What runs instead</h3>
-    <div class="di-emit" style="border-left-color:#F5B546;">
-      <div style="flex:1;min-width:0;">
-        <div class="di-emit-label">Cold-start path</div>
-        <div class="di-emit-source">The scored-path sections are skipped. Light entry gates decide whether a starter offer is made, and failing them defers rather than declines.</div>
-      </div>
-      <span class="di-emit-note">branch taken</span>
-    </div>` : ''}`;
+/* ---------- Generic condition evaluation ---------- */
+
+// The applicant field that answers a shared parameter, with the unit it is
+// carried in. Rules and cold-start gates are both written against parameters,
+// so they share one evaluator rather than each parsing values themselves.
+const PARAM_SOURCE = {
+  age: () => ({ v: aNum('age'), unit: 'years' }),
+  tenure: () => ({ v: aNum('walletAgeDays'), unit: 'days' }),
+  kyc: () => ({ v: applicantState().kyc }),
+  account: () => ({ v: applicantState().account }),
+  blocklist: () => ({ v: applicantState().blocklist }),
+  sim: () => ({ v: aNum('simAgeDays'), unit: 'days' }),
+  txnMonths: () => ({ v: aNum('txnMonths'), unit: 'months' }),
+  arrears: () => ({ v: aNum('arrearsDays90'), unit: 'days' }),
+  inflow: () => ({ v: aNum('inflow') }),
+  consistency: () => ({ v: aNum('consistency') }),
+  volatility: () => ({ v: aNum('volatility') }),
+  score: () => ({ v: aNum('score') }),
+  onTime: () => ({ v: aNum('onTimeInstalments') }),
+  cluster: () => ({ v: aNum('walletsOnDevice') }),
+  income: () => ({ v: aNum('income') }),
+  dailyApprovals: () => ({ v: aNum('approvalsToday') }),
+  dailyDisbursed: () => ({ v: aNum('disbursedToday') }),
+  balance: () => ({ v: aNum('inflow') }),
+};
+
+// Exposure is written three ways in the draft: on this product, in open loans
+// of this kind, and across every product. The rule's own wording says which.
+function exposureFor(value) {
+  const t = String(value || '').toLowerCase();
+  return /across products|total/.test(t)
+    ? { v: aNum('totalExposure'), what: 'across all products' }
+    : { v: aNum('productExposure'), what: 'on this product' };
+}
+
+// A condition the simulator cannot answer from an applicant is reported as not
+// evaluated, with what it would need. Guessing would be worse than saying so.
+const PARAM_UNAVAILABLE = {
+  afford: 'the instalment, which L4 works out further down',
+  pd: 'a probability of default from the model',
+  confidence: 'model coverage, checked as a setting at L0 instead',
+  popAffected: 'the blast radius of the draft, which is a portfolio figure',
+  pilotCell: 'the cell this application came from',
+  pilotExposure: 'total pilot exposure, which is a portfolio figure',
+  device: 'the device type on file',
+  avgBalance: 'a 90-day average balance',
+  outflow: 'average monthly outflow',
+  activeDays: 'the active-days ratio, checked as a setting at L0 instead',
+  recharge: 'recharge regularity',
+};
+
+// Evaluates one condition (a rule or a cold-start gate) against the applicant.
+// Returns null when the condition cannot be answered, so callers can say so.
+function evalCondition(param, op, value) {
+  const def = paramDef(param);
+  if (!def) return { runnable: false, reason: 'this parameter is no longer defined in Global setup' };
+  if (PARAM_UNAVAILABLE[param]) return { runnable: false, reason: PARAM_UNAVAILABLE[param] };
+
+  if (param === 'exposure') {
+    const { v, what } = exposureFor(value);
+    const thr = parseFloat(String(splitValue(value).num).replace(/,/g, ''));
+    if (v == null || !Number.isFinite(thr)) return { runnable: false, reason: 'an open balance for this customer' };
+    return { runnable: true, ok: op === 'lte' ? v <= thr : op === 'eq' ? v === thr : v >= thr,
+      actual: MONEY_FMT(v) + ' ' + what, threshold: MONEY_FMT(thr) };
   }
 
-  return `
-  <div class="card panel" style="margin-top:16px;">
-    <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
-      <div style="min-width:0;">
-        <h2 class="panel-title">Decision explanation <span class="mode-pill" style="vertical-align:middle;margin-left:6px;">Read-only</span></h2>
-        <div class="panel-sub" style="max-width:660px;">The reason codes the engine would emit for a sample customer, resolved from the rules and model factors that actually fired. Nothing here is authored: change a rule's reason code in the Rules tab and this changes with it.</div>
-      </div>
-      <div class="di-tabs">
-        ${SAMPLE_DECISIONS.map((s, i) => `
-          <button class="di-tab${i === state.diSample ? ' active' : ''}" data-action="di-sample" data-idx="${i}"
-            aria-pressed="${i === state.diSample ? 'true' : 'false'}"
-            aria-label="Show the decision explanation for ${esc(s.name)}: ${esc(s.outcome)}">${esc(s.name)}</button>`).join('')}
-      </div>
-    </div>
+  const src = PARAM_SOURCE[param];
+  if (!src) return { runnable: false, reason: `a value for ${labelOf(param).toLowerCase()}` };
+  const got = src();
+  if (got.v == null || got.v === '') return { runnable: false, reason: `a value for ${labelOf(param).toLowerCase()}` };
 
-    <div class="di-body">
-      <div class="di-customer">
-        <div>
-          <div class="di-customer-name">${esc(sample.name)}</div>
-          <div class="di-customer-sub">${esc(sample.summary)}</div>
-        </div>
-        <span class="chip" style="background:${outcomeColors[0]};color:${outcomeColors[1]};border:1px solid ${outcomeColors[2]};">${esc(sample.outcome)}</span>
-      </div>
-      <div class="di-detail">${esc(sample.detail)}</div>
-      ${body}
+  if (def.type === 'category') {
+    const list = catList(value).map(s => s.toLowerCase());
+    const cur = String(got.v).toLowerCase();
+    const inList = list.some(x => cur === x || cur.startsWith(x));
+    const met = op === 'notin' ? !inList : inList;
+    return { runnable: true, ok: met, actual: String(got.v), threshold: catList(value).join(' or ') };
+  }
+
+  const parts = splitValue(value);
+  const thr = parseFloat(String(parts.num).replace(/,/g, ''));
+  if (!Number.isFinite(thr)) return { runnable: false, reason: 'a numeric threshold on this condition' };
+
+  let a = got.v, t = thr, shown = parts.num + (parts.suffix ? ' ' + parts.suffix : '');
+  if (def.type === 'duration') {
+    // The value carries its own unit word; fall back to the parameter's.
+    const valueUnit = unitDays(parts.suffix) ? parts.suffix : def.unit;
+    a = durationDays(got.v, got.unit || def.unit);
+    t = durationDays(thr, valueUnit);
+    if (a == null || t == null) return { runnable: false, reason: 'a comparable unit of time' };
+  }
+  const meets = op === 'lte' ? a <= t : op === 'eq' ? a === t : a >= t;
+  return { runnable: true, ok: meets, actual: fieldDisplay(param, got), threshold: shown };
+}
+
+function fieldDisplay(param, got) {
+  const def = paramDef(param);
+  if (!def) return String(got.v);
+  if (def.type === 'currency') return MONEY_FMT(got.v);
+  const u = got.unit || def.unit;
+  return u ? `${got.v} ${u}` : String(got.v);
+}
+
+// A rule becomes a trace line. `pass` rules stop the application when the
+// condition is NOT met; every other action fires when it IS met.
+function ruleCheck(r) {
+  const res = evalCondition(r.param, r.op, r.value);
+  const label = sentence(r);
+  if (!res.runnable) {
+    return { label, state: 'unknown', code: r.code, detail: `Not evaluated here: needs ${res.reason}.` };
+  }
+  const fires = r.action === 'pass' ? !res.ok : res.ok;
+  return {
+    label, code: r.code,
+    detail: `${res.actual} against ${res.threshold}`,
+    state: fires ? (r.action === 'ladder' ? 'fired' : 'fail') : 'ok',
+    effect: fires ? (r.action === 'pass' ? 'decline' : r.action) : null,
+    rc: fires ? r.rc : null,
+  };
+}
+
+// What an action does to the application. Caps do not stop it; they are applied
+// when the limit is assembled at L5.
+const ACTION_STOPS = { decline: 'decline', refer: 'refer', hold: 'hold', throttle: 'hold' };
+
+/* ---------- Single-customer assessment: the walk ---------- */
+
+// Runs the applicant down the waterfall. Returns one entry per layer plus the
+// caps that assembled the limit, so the trace and the summary are the same
+// computation read two ways.
+function assess() {
+  const c = cfg();
+  const a = applicantState();
+  const L = {};                       // layer key -> trace entry
+  LAYER_KEYS.forEach(k => { L[k] = { key: k, checks: [], rules: [], status: 'pending', note: '' }; });
+  const rulesIn = k => c.rules.filter(r => r.section === k && r.enabled);
+
+  let stopped = null;                 // { layer, kind, rc, why } once something stops it
+  const stop = (layer, kind, rc, why) => { if (!stopped) stopped = { layer, kind, rc, why }; };
+  // A stopping check explains itself with both its name and what it measured,
+  // since the name alone ("Dormancy") does not say why the customer failed.
+  const stopWhy = x => (x.code ? `${x.code}: ${x.label}` : x.label) + (x.detail ? ` (${x.detail})` : '');
+
+  /* --- L0: is there enough data to score this customer at all? --- */
+  const l0 = L.l0;
+  l0.checks.push(
+    check({ label: 'Feature completeness', actual: aNum('featureCompleteness'), threshold: sNum('l0', 'featureCompleteness'),
+      dir: 'min', type: 'percent', effect: 'route', rc: 'RC-301', why: 'Below this, too many of the model’s inputs are missing for the score to mean anything.' }),
+    check({ label: 'Account age to be scored', actual: aNum('walletAgeDays'), threshold: sNum('l0', 'minWalletTenure'),
+      dir: 'min', type: 'days', effect: 'route', rc: 'RC-104', why: 'Behaviour observed over a short period is not evidence. Also checked at L1, for a different reason.' }),
+    check({ label: 'Transaction history', actual: aNum('activeDays90'), threshold: sNum('l0', 'minTxnHistory'),
+      dir: 'min', type: 'count', unit: 'active days in 90', effect: 'route', rc: 'RC-301', why: 'Distinct days with activity, so a dormant account with one transaction does not qualify.' }),
+    check({ label: 'Model confidence', actual: aNum('modelConfidence'), threshold: sNum('l0', 'modelConfidenceFloor'),
+      dir: 'min', type: 'percent', effect: 'route', rc: 'RC-302', why: 'The model reports how sure it is. Below the floor the number is not trusted.' }),
+    check({ label: 'Score freshness', actual: aNum('scoreAgeDays'), threshold: sNum('l0', 'scoreStaleness'),
+      dir: 'max', type: 'days', effect: 'route', rc: 'RC-302', why: 'Scores recalculate daily, so a stale one usually means the pipeline failed.' }),
+  );
+  l0.rules = rulesIn('l0').map(r => {
+    const x = ruleCheck(r);
+    if (x.state === 'fail' && r.action === 'pass') x.effect = 'route';
+    return x;
+  });
+  const l0Stop = l0.rules.find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+  if (l0Stop) stop('L0', ACTION_STOPS[l0Stop.effect], l0Stop.rc, stopWhy(l0Stop));
+
+  const hasNoData = (aNum('activeDays90') || 0) === 0 && (aNum('txnMonths') || 0) === 0;
+  const l0Failed = l0.checks.filter(x => x.state === 'fail').concat(l0.rules.filter(x => x.state === 'fail' && x.effect === 'route'));
+  const route = hasNoData ? 'insufficient' : (l0Failed.length ? 'thin' : 'scored');
+  const routeLabel = { scored: 'Scored', thin: 'Thin file', insufficient: 'Insufficient data' }[route];
+  l0.status = stopped ? 'stopped' : route === 'scored' ? 'passed' : 'routed';
+  l0.note = {
+    scored: 'Enough data to use the model. The customer is scored normally at L3.',
+    thin: 'Not enough to trust the score. The scored path is skipped and L3 uses the thin-file rules instead. This is a routing decision, not a decline.',
+    insufficient: 'No usable history at all. The cold-start branch runs in place of L1 to L6, so the customer is deferred rather than declined.',
+  }[route];
+  // A coverage rule can cap without routing, so it is recorded separately.
+  const thinCapRule = l0.rules.find(x => x.state === 'fail' && x.effect === 'capThin');
+
+  /* --- The cold-start branch replaces the rest of the waterfall --- */
+  if (route === 'insufficient' && !stopped) {
+    const cs = c.coldStart;
+    const gates = cs.gates.map(g => {
+      const res = evalCondition(g.param, g.op, g.value);
+      const label = `${labelOf(g.param)} ${OPLABEL[g.op]} ${g.value}`;
+      if (!res.runnable) {
+        return { label, state: cs.unknownIsNotFail ? 'unknown' : 'fail', locked: g.locked,
+          detail: cs.unknownIsNotFail
+            ? `Not known: needs ${res.reason}. Unknown does not count as a failure.`
+            : `Not known: needs ${res.reason}, and unknown counts as a failure.` };
+      }
+      return { label, state: res.ok ? 'ok' : 'fail', locked: g.locked,
+        detail: `${res.actual} against ${res.threshold}` };
+    });
+    const failed = gates.filter(g => g.state === 'fail');
+    const st = cs.starter;
+    const nano = Number(st.nanoAmount) || 0;
+    const dep = Number(st.depositPct) || 0;
+    const offers = [];
+    if (!failed.length && (st.type === 'nano' || st.type === 'both') && nano > 0) offers.push({ label: 'Nano limit', amount: nano });
+    if (!failed.length && (st.type === 'deposit' || st.type === 'both') && dep > 0) offers.push({ label: `Device with ${dep}% down payment`, amount: null });
+    const retry = new Date();
+    retry.setDate(retry.getDate() + (Number(cs.defer.retryDays) || 0));
+    return {
+      route, routeLabel, layers: L, coldStart: {
+        gates, failed, offers,
+        blockedByLocked: failed.some(g => g.locked),
+        retryOn: retry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        retryDays: Number(cs.defer.retryDays) || 0,
+        onTimeRequired: Number(cs.graduation.onTimeRequired) || 0,
+      },
+      outcome: failed.length
+        ? { kind: 'defer', label: 'Defer', at: 'Cold start', rc: 'RC-301',
+            why: `${plural(failed.length, 'light entry gate')} not met. The customer may apply again in ${plural(Number(cs.defer.retryDays) || 0, 'day')}.` }
+        : offers.length
+          ? { kind: 'approve', label: 'Starter offer', at: 'Cold start', rc: null,
+              why: 'Every light entry gate is met, so a starter offer is made with no score involved.' }
+          : { kind: 'defer', label: 'Defer', at: 'Cold start', rc: 'RC-301',
+              why: 'The gates are met but no starter offer is configured, so there is nothing to offer yet.' },
+      offer: null, caps: [],
+    };
+  }
+
+  /* --- L1: hard knockouts --- */
+  const l1 = L.l1;
+  const priorDefault = aNum('monthsSincePriorDefault');
+  l1.checks.push(
+    check({ label: 'Loans open right now', actual: aNum('activeLoans'), threshold: sNum('l1', 'concurrentLoanCap'),
+      dir: 'max', type: 'count', unit: 'loans', effect: 'decline', rc: 'RC-401', why: 'Holding several loans at once is one of the fastest routes to over-indebtedness.' }),
+    check({ label: 'Currently delinquent', actual: aNum('currentDpd'), threshold: sNum('l1', 'delinquentDpd'),
+      dir: 'max', type: 'days', effect: 'decline', rc: 'RC-103', why: 'Days past due on any open loan.' }),
+    check({ label: 'Account age to be eligible', actual: aNum('walletAgeDays'), threshold: sNum('l1', 'minAccountTenure'),
+      dir: 'min', type: 'days', effect: 'decline', rc: 'RC-104', why: 'An eligibility floor. L0 checks the same field, but asks whether a score can be trusted.' }),
+    check({ label: 'Dormancy', actual: aNum('daysSinceLastTxn'), threshold: sNum('l1', 'dormancyLimit'),
+      dir: 'max', type: 'days', effect: 'decline', rc: 'RC-103', why: 'Days since any transaction. A long gap means the customer is not currently engaged.' }),
+    priorDefault == null
+      ? { label: 'Prior default lookback', state: 'ok', detail: 'No prior default on record.', why: 'Excludes a customer who has defaulted with Ecocash inside the lookback.' }
+      : check({ label: 'Prior default lookback', actual: priorDefault, threshold: sNum('l1', 'priorDefaultLookback'),
+          dir: 'min', type: 'count', unit: 'months since', effect: 'decline', rc: 'RC-401', why: 'Excludes a customer who has defaulted with Ecocash inside the lookback.' }),
+  );
+  const staffRule = settingValue('l1', 'staffHandling');
+  if (a.isStaff) {
+    l1.checks.push({
+      label: 'Staff and related parties', state: staffRule === 'No special handling' ? 'ok' : 'fail',
+      detail: `Flagged as staff. This profile is set to “${staffRule || 'nothing yet'}”.`,
+      effect: staffRule === 'Exclude' ? 'decline' : staffRule === 'Refer to manual review' ? 'refer' : null,
+      rc: 'RC-103', why: 'Usually routed to review rather than declined, for governance reasons.',
+    });
+  }
+  l1.rules = rulesIn('l1').map(ruleCheck);
+  const l1Stop = [...l1.checks, ...l1.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+  if (l1Stop) stop('L1', ACTION_STOPS[l1Stop.effect], l1Stop.rc, stopWhy(l1Stop));
+  l1.status = l1Stop ? 'stopped' : 'passed';
+
+  /* --- L2: fraud and first-payment-default screens --- */
+  const l2 = L.l2;
+  if (!stopped) {
+    l2.checks.push(
+      check({ label: 'Recent SIM swap', actual: aNum('daysSinceSimSwap'), threshold: sNum('l2', 'simSwapWindow'),
+        dir: 'min', type: 'days', effect: 'refer', rc: 'RC-502', blankMeans: 'No SIM swap on record.',
+        why: 'A swap shortly before an application can indicate an account takeover.' }),
+      check({ label: 'Device changes', actual: aNum('deviceChanges6m'), threshold: sNum('l2', 'deviceChangeFreq'),
+        dir: 'max', type: 'count', unit: 'changes in 6 months', effect: 'refer', rc: 'RC-403',
+        why: 'Frequent changes can indicate device resale, which matters directly when the loan finances a device.' }),
+      check({ label: 'Application velocity', actual: aNum('applications30d'), threshold: sNum('l2', 'applicationVelocity'),
+        dir: 'max', type: 'count', unit: 'applications in 30 days', effect: 'refer', rc: 'RC-502',
+        why: 'Repeated applications in a short period suggest shopping for an approval.' }),
+      check({ label: 'Profile change velocity', actual: aNum('daysSinceProfileChange'), threshold: sNum('l2', 'profileChangeWindow'),
+        dir: 'min', type: 'days', effect: 'refer', rc: 'RC-502', blankMeans: 'No recent KYC or contact change.',
+        why: 'KYC or contact details changing just before an application is a takeover signal.' }),
+      check({ label: 'Pre-application inflow spike', actual: aNum('inflowSpike'), threshold: sNum('l2', 'inflowSpike'),
+        dir: 'max', type: 'ratio', unit: 'x the 90-day average', effect: 'refer', rc: 'RC-502',
+        why: 'A sudden spike can mean the wallet was funded to look more creditworthy.' }),
+    );
+    const dta = settingValue('l2', 'dormantThenActive');
+    if (a.dormantThenActive) {
+      l2.checks.push({
+        label: 'Dormant then suddenly active', state: dta === 'Off' || !dta ? 'ok' : 'fail',
+        detail: dta && dta !== 'Off' ? `Flagged, and this profile is set to “${dta}”.` : 'Flagged, but this screen is switched off.',
+        effect: dta === 'Decline' ? 'decline' : dta === 'Refer' ? 'refer' : null, rc: 'RC-502',
+        why: 'An account that was quiet and then became busy shortly before applying.',
+      });
+    }
+    l2.rules = rulesIn('l2').map(ruleCheck);
+    const l2Stop = [...l2.checks, ...l2.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l2Stop) stop('L2', ACTION_STOPS[l2Stop.effect], l2Stop.rc, stopWhy(l2Stop));
+    l2.status = l2Stop ? 'stopped' : 'passed';
+  } else { l2.status = 'not-reached'; }
+
+  /* --- L3: score decisioning, or the thin-file offer --- */
+  const l3 = L.l3;
+  const bands = c.bands;
+  const score = aNum('score');
+  let bandIdx = null, band = null, indicative = null, term = null, deposit = null, offerSource = '';
+  if (!stopped) {
+    if (route === 'thin') {
+      indicative = sNum('l0', 'starterLimit');
+      term = sNum('l0', 'starterTenure');
+      deposit = sNum('l0', 'starterDeposit');
+      offerSource = 'Starter limit (thin-file path)';
+      l3.checks.push({
+        label: 'Thin-file offer', state: indicative == null ? 'unset' : 'ok',
+        detail: indicative == null
+          ? 'No starter limit set yet, so there is nothing to offer on this path.'
+          : `${MONEY_FMT(indicative)} over ${plural(term ?? 0, 'month')}, ${deposit ?? 0}% deposit. Set on the thin-file path at L0.`,
+        why: 'The model score is not used on this path. The limit is fixed and rises only as the customer repays.',
+      });
+      const ladder = rulesIn('l3').filter(r => r.action === 'ladder').map(ruleCheck);
+      l3.rules = ladder;
+      const unlocked = ladder.filter(x => x.state === 'fail');
+      if (unlocked.length) {
+        l3.note = `${plural(unlocked.length, 'ladder condition')} met, so this customer is eligible for the next step up to the ${MONEY_FMT(sNum('l0', 'ladderCeiling') || 0)} ceiling.`;
+      }
+      if (indicative == null) stop('L3', 'decline', 'RC-301', 'no starter limit configured');
+    } else {
+      const cutoff = sNum('l3', 'masterCutoff');
+      // First to fail wins: the master cutoff is stated as overriding the band
+      // table, so it is read before the band decision.
+      l3.checks.push(check({
+        label: 'Master approval cutoff', actual: score, threshold: cutoff,
+        dir: 'min', type: 'count', unit: 'points', effect: 'decline', rc: 'RC-114',
+        why: 'A single floor below which nobody is approved, whatever the band table says. Read before the band.',
+      }));
+      bands.forEach((b, i) => { if (score != null && score >= b.floor) { bandIdx = i; band = b; } });
+      if (band) {
+        const refer = catList(settingValue('l3', 'referBands')).some(x => x.toLowerCase() === band.label.toLowerCase());
+        indicative = bandLimit(band);
+        term = band.maxTenure;
+        deposit = effectiveDeposit(band);
+        offerSource = `${band.label} band`;
+        l3.checks.push({
+          label: 'Score band', state: band.decision === 'Decline' ? 'fail' : refer ? 'fail' : 'ok',
+          detail: `${plural(score ?? 0, 'point')} lands in ${band.label}, floor ${band.floor}. Decision: ${band.decision}.${refer ? ' This band is set to refer.' : ''}`,
+          effect: band.decision === 'Decline' ? 'decline' : refer ? 'refer' : null,
+          rc: band.decision === 'Decline' ? 'RC-114' : 'RC-602',
+          why: 'The band sets the indicative offer: a multiplier of the product maximum, plus a term and a deposit.',
+        });
+        if (indicative != null && band.decision !== 'Decline' && !refer) {
+          l3.checks.push({
+            label: 'Indicative offer', state: 'ok',
+            detail: `${MONEY_FMT(indicative)} at ${band.multiplier}x the product maximum, over ${plural(term ?? 0, 'month')}, ${deposit ?? 0}% deposit${depositFloorBinds(band) ? ` (the L5 floor, above this band's own ${band.deposit}%)` : ''}.`,
+            why: 'Every later layer can lower this figure. None can raise it.',
+          });
+        }
+      } else if (score != null) {
+        l3.checks.push({ label: 'Score band', state: 'fail',
+          detail: `${plural(score, 'point')} sits below every band floor.`, effect: 'decline', rc: 'RC-114',
+          why: 'No band covers this score, so there is no offer to make.' });
+      } else {
+        l3.checks.push({ label: 'Score band', state: 'unknown',
+          detail: 'No model score for this customer, but L0 routed them as scored. Check the L0 thresholds.',
+          why: 'The band is chosen from the score.' });
+      }
+      l3.rules = rulesIn('l3').map(ruleCheck);
+    }
+    if (thinCapRule) {
+      l3.checks.push({ label: `Coverage cap from ${thinCapRule.code}`, state: 'fail',
+        detail: `${thinCapRule.detail}. The limit is capped at the thin-file ceiling.`,
+        effect: 'capThin', rc: thinCapRule.rc,
+        why: 'A coverage rule at L0 can cap the limit without changing which path the customer takes.' });
+    }
+    const l3Stop = [...l3.checks, ...l3.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l3Stop) stop('L3', ACTION_STOPS[l3Stop.effect], l3Stop.rc, stopWhy(l3Stop));
+    l3.status = l3Stop ? 'stopped' : [...l3.checks, ...l3.rules].some(x => x.state === 'fail' && /^cap/.test(x.effect || '')) ? 'capped' : 'passed';
+  } else { l3.status = 'not-reached'; }
+
+  /* --- L4: affordability --- */
+  const l4 = L.l4;
+  let affordLimit = null, maxInstalment = null, usableIncome = null;
+  if (!stopped) {
+    const rawIncome = aNum('income');
+    const conf = aNum('incomeConfidence');
+    const confFloor = sNum('l4', 'incomeConfidence');
+    const haircut = sNum('l4', 'incomeHaircut');
+    const cut = rawIncome != null && conf != null && confFloor != null && conf < confFloor && haircut != null;
+    usableIncome = rawIncome == null ? null : (cut ? Math.round(rawIncome * (1 - haircut / 100)) : rawIncome);
+    if (rawIncome != null) {
+      l4.checks.push({
+        label: 'Income used', state: 'ok',
+        detail: cut
+          ? `${MONEY_FMT(rawIncome)} estimated at ${conf}% confidence, below the ${confFloor}% threshold, so a ${haircut}% haircut applies: ${MONEY_FMT(usableIncome)} is used.`
+          : `${MONEY_FMT(rawIncome)}, derived by ${String(settingValue('l4', 'incomeMethod') || 'no method set yet').toLowerCase()}.`,
+        why: 'Wallet inflow is not income. A weak estimate produces a cautious offer rather than a confident wrong one.',
+      });
+    }
+    l4.checks.push(
+      check({ label: 'Minimum income', actual: usableIncome, threshold: sNum('l4', 'minIncome'),
+        dir: 'min', type: 'currency', effect: 'decline', rc: 'RC-208', why: 'A floor below which no loan is offered, whatever the ratios say.' }),
+      check({ label: 'Income stability', actual: aNum('incomeCoV'), threshold: sNum('l4', 'incomeStability'),
+        dir: 'max', type: 'ratio', unit: 'coefficient of variation', effect: 'refer', rc: 'RC-207',
+        why: 'Steady income supports an instalment more reliably than the same average arriving erratically.' }),
+    );
+    const ratio = sNum('l4', 'instalmentToIncome');
+    const floor = sNum('l4', 'disposableFloor');
+    const deduct = settingValue('l4', 'deductObligations') === true;
+    const expenses = aNum('expenses') || 0;
+    const others = deduct ? (aNum('otherInstalments') || 0) : 0;
+    if (usableIncome != null && ratio != null) {
+      const byRatio = usableIncome * (ratio / 100);
+      const headroom = floor == null ? null : usableIncome - expenses - others - floor;
+      maxInstalment = headroom == null ? byRatio : Math.max(0, Math.min(byRatio, headroom));
+      const bound = headroom != null && headroom < byRatio ? 'disposable income' : 'the income ratio';
+      l4.checks.push({
+        label: 'Affordable instalment', state: maxInstalment > 0 ? 'ok' : 'fail',
+        detail: `${MONEY_FMT(Math.round(maxInstalment))} per month. ${ratio}% of ${MONEY_FMT(usableIncome)} is ${MONEY_FMT(Math.round(byRatio))}`
+          + (headroom == null ? ', with no disposable floor set.' : `; after ${MONEY_FMT(expenses)} expenses${deduct ? `, ${MONEY_FMT(others)} other instalments` : ''} and the ${MONEY_FMT(floor)} floor there is ${MONEY_FMT(Math.round(headroom))} left. Bound by ${bound}.`),
+        effect: maxInstalment > 0 ? null : 'decline', rc: 'RC-207',
+        why: 'A customer can be low risk and still be offered more than they can comfortably service.',
+      });
+      if (term) affordLimit = Math.max(0, maxInstalment * term);
+    } else {
+      l4.checks.push({ label: 'Affordable instalment', state: usableIncome == null ? 'unknown' : 'unset',
+        detail: usableIncome == null ? 'No income for this customer, so no instalment can be worked out.' : 'No instalment-to-income cap set yet.',
+        why: 'The affordability cap is the instalment the customer can carry, multiplied by the loan term.' });
+    }
+    l4.rules = rulesIn('l4').map(r => {
+      // A-01 reads the affordability ratio, which is the cap L4 has just
+      // applied. Reporting it as "not evaluated" would hide the actual work.
+      const mult = /monthly instalment/i.test(String(r.value)) ? parseFloat(splitValue(r.value).num) : null;
+      if (mult != null && maxInstalment != null && Number.isFinite(mult)) {
+        const src = PARAM_SOURCE[r.param];
+        const have = src ? src().v : null;
+        if (have == null) return ruleCheck(r);
+        const target = mult * maxInstalment;
+        const met = r.op === 'lte' ? have <= target : have >= target;
+        const fires = r.action === 'pass' ? !met : met;
+        return { label: sentence(r), code: r.code, state: fires ? 'fail' : 'ok',
+          detail: `${MONEY_FMT(have)} against ${mult}\u00d7 the ${MONEY_FMT(Math.round(maxInstalment))} instalment, ${MONEY_FMT(Math.round(target))}.`,
+          effect: fires ? (r.action === 'pass' ? 'decline' : r.action) : null, rc: fires ? r.rc : null };
+      }
+      if (r.param === 'afford' && maxInstalment != null && usableIncome) {
+        return { label: sentence(r), code: r.code, state: 'ok',
+          detail: `Applied. The instalment is held at ${MONEY_FMT(Math.round(maxInstalment))}, which is ${Math.round((maxInstalment / usableIncome) * 100)}% of income.`,
+          effect: null, rc: null };
+      }
+      return ruleCheck(r);
+    });
+    const l4Stop = [...l4.checks, ...l4.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l4Stop) stop('L4', ACTION_STOPS[l4Stop.effect], l4Stop.rc, stopWhy(l4Stop));
+    l4.status = l4Stop ? 'stopped' : 'passed';
+  } else { l4.status = 'not-reached'; }
+
+  /* --- L5: the final limit, taken as the lowest of every cap --- */
+  const l5 = L.l5;
+  let caps = [], finalLimit = null, bindingCap = null;
+  if (!stopped) {
+    const productMax = sNum('l5', 'productMaximum');
+    const exposureCap = sNum('l5', 'customerExposureCap');
+    const held = aNum('totalExposure');
+    const headroom = exposureCap == null || held == null ? null : Math.max(0, exposureCap - held);
+    const tier = route === 'thin' ? settingValue('l0', 'eligibleTier') : null;
+
+    caps = [
+      { label: offerSource || 'Band limit', amount: indicative, from: 'L3',
+        note: indicative == null ? 'Nothing set, so this cap does not apply.' : '' },
+      { label: 'Affordability limit', amount: affordLimit == null ? null : Math.round(affordLimit), from: 'L4',
+        note: affordLimit == null ? 'Could not be worked out, so this cap does not apply.'
+          : `${MONEY_FMT(Math.round(maxInstalment))} a month over ${plural(term ?? 0, 'month')}.` },
+      { label: 'Product maximum', amount: productMax, from: 'L5',
+        note: productMax == null ? 'Not set yet, so this cap does not apply.' : '' },
+      { label: 'Customer exposure headroom', amount: headroom, from: 'L5',
+        note: headroom == null ? 'Needs both an exposure cap and a balance for this customer.'
+          : `${MONEY_FMT(exposureCap)} cap less ${MONEY_FMT(held)} already held.` },
+      { label: 'Device tier cap', amount: null, from: 'L5',
+        note: tier ? `Thin-file customers are limited to ${String(tier).toLowerCase()}, but this profile holds no price per tier, so nothing is capped here.`
+                   : 'No price per device tier is configured, so nothing is capped here.' },
+    ];
+    // Rules at L5 that cap rather than decline become caps in the same list, so
+    // there is one place where the limit is assembled.
+    rulesIn('l5').forEach(r => {
+      const res = ruleCheck(r);
+      l5.rules.push(res);
+      if (res.state === 'fail' && (res.effect === 'capAfford' || res.effect === 'capThin')) {
+        const thr = parseFloat(String(splitValue(r.value).num).replace(/,/g, ''));
+        caps.push({ label: `Cap from ${r.code}`, amount: Number.isFinite(thr) ? thr : null, from: 'L5',
+          note: sentence(r), rc: r.rc });
+      }
+      if (res.state === 'fail' && res.effect === 'reduce' && caps.length) {
+        caps.push({ label: `Reduction from ${r.code}`, amount: null, from: 'L5', note: sentence(r), rc: r.rc, reduce: 0.3 });
+      }
+    });
+    if (thinCapRule) {
+      const ceiling = Number(c.fallback.tiers.thinCeiling);
+      caps.push({ label: 'Thin-file ceiling', amount: Number.isFinite(ceiling) ? ceiling : null, from: 'L0',
+        note: `Applied because ${thinCapRule.code} fired at L0.`, rc: thinCapRule.rc });
+    }
+
+    const live = caps.filter(x => x.amount != null);
+    if (live.length) {
+      bindingCap = live.reduce((lo, x) => (x.amount < lo.amount ? x : lo));
+      finalLimit = bindingCap.amount;
+      caps.forEach(x => { x.binding = x === bindingCap; });
+      // A percentage reduction is applied after the lowest cap, since it acts
+      // on whatever the limit turned out to be.
+      caps.filter(x => x.reduce).forEach(x => { finalLimit = finalLimit * (1 - x.reduce); x.amount = Math.round(finalLimit); });
+      finalLimit = roundLimit(finalLimit);
+    }
+
+    const minViable = sNum('l5', 'minViableLimit');
+    l5.checks.push({
+      label: 'Lowest cap wins', state: finalLimit == null ? 'unset' : 'ok',
+      detail: finalLimit == null
+        ? 'No cap could be worked out, so there is no limit to offer.'
+        : `${bindingCap.label} is the lowest at ${MONEY_FMT(bindingCap.amount)}. Rounded by “${settingValue('l5', 'limitRounding') || 'no rule set'}” to ${MONEY_FMT(finalLimit)}.`,
+      why: 'The final limit is the lowest of every applicable cap. No layer can raise it.',
+    });
+    if (finalLimit == null) stop('L5', 'decline', 'RC-114', 'no limit could be assembled');
+    l5.checks.push(check({ label: 'Minimum viable limit', actual: finalLimit, threshold: minViable,
+      dir: 'min', type: 'currency', effect: 'decline', rc: 'RC-207',
+      why: 'Below this the loan is not worth making, so it is declined rather than offered.' }));
+    if (term != null && permittedTerms().length && !permittedTerms().includes(term)) {
+      l5.checks.push({ label: 'Loan term', state: 'fail',
+        detail: `${plural(term, 'month')} is not one of the permitted terms (${permittedTerms().map(t => t + ' mo').join(', ')}).`,
+        effect: 'refer', rc: 'RC-602', why: 'L5 owns which repayment periods may be offered at all.' });
+    }
+    const l5Stop = [...l5.checks, ...l5.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l5Stop) stop('L5', ACTION_STOPS[l5Stop.effect], l5Stop.rc, stopWhy(l5Stop));
+    l5.status = l5Stop ? 'stopped' : 'passed';
+  } else { l5.status = 'not-reached'; }
+
+  /* --- L6: does this approval remain acceptable for the book? --- */
+  const l6 = L.l6;
+  if (!stopped) {
+    if (settingValue('l6', 'killSwitch') === true) {
+      l6.checks.push({ label: 'Kill switch', state: 'fail', detail: 'On. Every approval is halted.',
+        effect: 'hold', rc: 'RC-601', why: 'A manual control that stops all lending immediately.' });
+    }
+    l6.checks.push(check({ label: 'Daily disbursement cap', actual: aNum('disbursedToday'), threshold: sNum('l6', 'dailyDisbursementCap'),
+      dir: 'max', type: 'currency', effect: 'hold', rc: 'RC-601', why: 'A ceiling on the total disbursed per day, controlling how fast exposure builds.' }));
+    if (route === 'thin') {
+      l6.checks.push(check({ label: 'Thin-file share of approvals', actual: aNum('thinShareToday'), threshold: sNum('l6', 'thinFileShare'),
+        dir: 'max', type: 'percent', effect: 'hold', rc: 'RC-601',
+        why: 'This customer is on the thin-file path, so this cap applies to them.' }));
+    }
+    const macro = settingValue('l6', 'macroTightening');
+    const steps = macro === 'Tighten by one band' ? 1 : macro === 'Tighten by two bands' ? 2 : 0;
+    if (steps && bandIdx != null && finalLimit != null) {
+      const tighter = bands[Math.max(0, bandIdx - steps)];
+      const tightened = roundLimit(bandLimit(tighter) ?? 0);
+      const applied = Math.min(finalLimit, tightened);
+      l6.checks.push({ label: 'Global macro tightening', state: applied < finalLimit ? 'fail' : 'ok',
+        detail: applied < finalLimit
+          ? `On, ${macro.toLowerCase()}. ${band.label} is treated as ${tighter.label}, cutting the limit to ${MONEY_FMT(applied)}.`
+          : `On, ${macro.toLowerCase()}, but the limit is already at or below the tightened figure.`,
+        effect: null, rc: null,
+        why: 'One control tightens the whole book at once, for movements no individual feature predicts.' });
+      finalLimit = applied;
+      if (applied < caps.reduce((lo, x) => (x.amount != null && x.amount < lo ? x.amount : lo), Infinity)) {
+        caps.push({ label: 'Macro tightening', amount: applied, from: 'L6', binding: true, note: macro });
+        caps.forEach(x => { if (x.label !== 'Macro tightening') x.binding = false; });
+        bindingCap = caps[caps.length - 1];
+      }
+    }
+    const autoT = settingValue('l6', 'autoTighten');
+    if (autoT && autoT !== 'Off') {
+      l6.checks.push({ label: 'Automatic tightening trigger', state: 'ok',
+        detail: `Armed, set to ${autoT.toLowerCase()}. It fires on early delinquency across the book, which is not part of a single application.`,
+        why: 'Reported here so it is visible, but it depends on portfolio performance rather than this customer.' });
+    }
+    const holdout = sNum('l6', 'randomHoldout');
+    if (holdout) {
+      l6.checks.push({ label: 'Random approval holdout', state: 'ok',
+        detail: `${holdout}% of applications just below the cutoff are approved at random. Whether this one is chosen is not deterministic, so it is not simulated.`,
+        why: 'Without a holdout every new model trains only on customers the old rules passed.' });
+    }
+    l6.rules = rulesIn('l6').map(ruleCheck);
+    const l6Stop = [...l6.checks, ...l6.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l6Stop) stop('L6', ACTION_STOPS[l6Stop.effect], l6Stop.rc, stopWhy(l6Stop));
+    l6.status = l6Stop ? 'stopped' : 'passed';
+  } else { l6.status = 'not-reached'; }
+
+  // "Capped the limit" belongs to the layer whose cap actually bound, not to
+  // L5, which only picks the lowest of them.
+  if (bindingCap && L[String(bindingCap.from).toLowerCase()] && L[String(bindingCap.from).toLowerCase()].status === 'passed') {
+    L[String(bindingCap.from).toLowerCase()].status = 'capped';
+  }
+
+  /* --- The outcome --- */
+  const kindLabel = { decline: 'Decline', refer: 'Refer for manual review', hold: 'Hold', defer: 'Defer' };
+  const outcome = stopped
+    ? { kind: stopped.kind, label: kindLabel[stopped.kind], at: stopped.layer, rc: stopped.rc, why: stopped.why }
+    : { kind: 'approve', label: route === 'thin' ? 'Approve at the thin-file limit' : 'Approve', at: 'L6', rc: null,
+        why: bindingCap ? `${bindingCap.label} was the lowest cap.` : 'No cap bound the limit.' };
+
+  const instalment = finalLimit != null && term ? Math.round((finalLimit / term) * 100) / 100 : null;
+  return {
+    route, routeLabel, layers: L, caps, bindingCap, outcome, coldStart: null,
+    offer: outcome.kind === 'approve' && finalLimit != null
+      ? { limit: finalLimit, term, deposit, instalment, band: band ? band.label : offerSource }
+      : null,
+  };
+}
+
+/* ---------- Single-customer assessment: the screen ---------- */
+
+const OUTCOME_STYLE = {
+  approve: ['#ECFDF3', '#067647', '#ABEFC6'],
+  decline: ['#FEF3F2', '#B42318', '#FECDCA'],
+  refer:   ['#EFF4FF', '#172E7B', '#C7D7FE'],
+  hold:    ['#FFF8E6', '#7A5B12', '#F5DFA5'],
+  defer:   ['#FFF8E6', '#7A5B12', '#F5DFA5'],
+};
+const CHECK_MARK = { ok: '✓', fail: '✕', fired: '↑', unset: '?', unknown: '?' };
+
+// One applicant field, editable in place inside the layer that reads it.
+function applicantEditor(f) {
+  const v = applicantState()[f.key];
+  const name = `${f.label}, for the customer being assessed`;
+  const common = `data-change="app-field" data-field="${esc(f.key)}"`;
+  if (f.type === 'toggle') {
+    return `<button class="switch switch-lg${v ? ' on' : ''}" data-action="app-toggle" data-field="${esc(f.key)}"
+      role="switch" aria-checked="${v ? 'true' : 'false'}" aria-label="${esc(name)}"><span class="knob"></span></button>`;
+  }
+  if (f.type === 'select') {
+    const def = paramDef(f.param) || {};
+    return `<select class="lim-select" ${common} aria-label="${esc(name)}">
+      ${(def.values || []).map(o => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+    </select>`;
+  }
+  const affix = f.type === 'currency' ? '$' : '';
+  const unit = f.unit || { percent: '%', days: 'days' }[f.type] || '';
+  const step = f.type === 'ratio' ? '0.01' : '1';
+  return `<span class="val-num lim-num">
+    ${affix ? `<span class="val-affix">${affix}</span>` : ''}
+    <input type="number" min="0" step="${step}" class="val-input" value="${esc(v ?? '')}"
+      placeholder="${esc(f.blankLabel || 'not known')}" ${common} aria-label="${esc(name)}" />
+    ${unit ? `<span class="val-unit">${esc(unit)}</span>` : ''}
+  </span>`;
+}
+
+function checkLine(x) {
+  const fired = x.state === 'fail' || x.state === 'fired';
+  const rc = fired && x.rc ? `<span class="rule-code">${esc(x.rc)}</span>` : '';
+  const effLabel = x.effect === 'route' ? 'Route to another path' : (ACTLABEL[x.effect] || x.effect);
+  const tone = x.effect === 'route' ? ' chk-effect-route' : x.state === 'fired' ? ' chk-effect-good' : '';
+  const eff = fired && x.effect ? `<span class="chk-effect${tone}">${esc(effLabel)}</span>` : '';
+  return `
+  <div class="chk chk-${x.state}">
+    <span class="chk-mark" aria-hidden="true">${CHECK_MARK[x.state] || '·'}</span>
+    <div class="chk-text">
+      <div class="chk-label">${esc(x.label)}${x.code ? ` <span class="rule-code">${esc(x.code)}</span>` : ''}</div>
+      <div class="chk-detail">${esc(x.detail || '')}</div>
+      ${x.why ? `<div class="chk-why">${esc(x.why)}</div>` : ''}
     </div>
+    <div class="chk-right">${eff}${rc}</div>
+  </div>`;
+}
+
+function renderLimitWaterfall(r) {
+  const live = r.caps.filter(x => x.amount != null);
+  if (!live.length) return '';
+  const max = Math.max(...live.map(x => x.amount), 1);
+  const rows = r.caps.map(x => {
+    if (x.amount == null) {
+      return `
+      <div class="cap-row cap-na">
+        <div class="cap-name">${esc(x.label)} <span class="cap-from">${esc(x.from)}</span></div>
+        <div class="cap-bar-wrap"><span class="cap-none">does not apply</span></div>
+        <div class="cap-amt">n/a</div>
+      </div>`;
+    }
+    return `
+    <div class="cap-row${x.binding ? ' is-binding' : ''}">
+      <div class="cap-name">${esc(x.label)} <span class="cap-from">${esc(x.from)}</span></div>
+      <div class="cap-bar-wrap"><div class="cap-bar" style="width:${Math.max(2, (x.amount / max) * 100)}%;"></div></div>
+      <div class="cap-amt">${esc(MONEY_FMT(x.amount))}${x.binding ? '<span class="cap-tag">binds</span>' : ''}</div>
+    </div>`;
+  }).join('');
+  const notes = r.caps.filter(x => x.note).map(x => `<div class="cap-note"><strong>${esc(x.label)}:</strong> ${esc(x.note)}</div>`).join('');
+  return `
+  <div class="card panel">
+    <h2 class="panel-title">Where the limit was cut</h2>
+    <div class="panel-sub" style="margin-bottom:12px;">Limits only ever go down. The final limit is the lowest of every applicable cap, so the shortest bar is the one that decided the offer.</div>
+    <div class="cap-table">${rows}</div>
+    <div class="cap-notes">${notes}</div>
+  </div>`;
+}
+
+function renderColdStartTrace(cs) {
+  const gates = cs.gates.map(g => `
+    <div class="chk chk-${g.state}">
+      <span class="chk-mark" aria-hidden="true">${CHECK_MARK[g.state] || '·'}</span>
+      <div class="chk-text">
+        <div class="chk-label">${esc(g.label)}${g.locked ? ' <span class="tag-essential">Non-negotiable</span>' : ''}</div>
+        <div class="chk-detail">${esc(g.detail)}</div>
+      </div>
+    </div>`).join('');
+  return `
+  <div class="card panel">
+    <h2 class="panel-title">Cold-start branch</h2>
+    <div class="panel-sub" style="margin-bottom:12px;">L1 to L6 are replaced by a short, data-light path, so a customer with no history is deferred rather than declined. Configure it on the <span class="nav-link" data-layer="l0">L0</span> insufficient-data path.</div>
+    ${gates}
+    <div class="cap-notes">
+      ${cs.offers.length
+        ? `<div class="cap-note"><strong>Starter offer:</strong> ${cs.offers.map(o => esc(o.amount != null ? MONEY_FMT(o.amount) + ' ' + o.label.toLowerCase() : o.label)).join(', ')}. Graduates after ${esc(plural(cs.onTimeRequired, 'on-time instalment'))}.</div>`
+        : `<div class="cap-note"><strong>Retry:</strong> the customer may apply again on ${esc(cs.retryOn)}, ${esc(plural(cs.retryDays, 'day'))} from today.</div>`}
+      ${cs.blockedByLocked ? `<div class="cap-note"><strong>Non-negotiable gate failed:</strong> this cannot be waived by taking a deposit.</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderAssess() {
+  const r = assess();
+  const oc = OUTCOME_STYLE[r.outcome.kind] || OUTCOME_STYLE.hold;
+  const rc = r.outcome.rc ? rcByCode(r.outcome.rc) : null;
+
+  const presets = APPLICANT_PRESETS.map((p, i) => `
+    <button class="seg-btn${i === state.presetIdx ? ' active' : ''}" data-action="app-preset" data-idx="${i}"
+      aria-pressed="${i === state.presetIdx ? 'true' : 'false'}"
+      title="${esc(p.hint)}" aria-label="Load the ${esc(p.name)} applicant: ${esc(p.hint)}">${esc(p.name)}</button>`).join('');
+
+  const offer = r.offer ? `
+    <div class="offer-grid">
+      <div><div class="offer-k">Limit</div><div class="offer-v">${esc(MONEY_FMT(r.offer.limit))}</div></div>
+      <div><div class="offer-k">Term</div><div class="offer-v">${r.offer.term == null ? 'not set' : esc(plural(r.offer.term, 'month'))}</div></div>
+      <div><div class="offer-k">Deposit</div><div class="offer-v">${r.offer.deposit == null ? 'n/a' : esc(r.offer.deposit + '%')}</div></div>
+      <div><div class="offer-k">Instalment</div><div class="offer-v">${r.offer.instalment == null ? 'n/a' : esc(MONEY_FMT(r.offer.instalment))}</div></div>
+      <div><div class="offer-k">From</div><div class="offer-v offer-v-sm">${esc(r.offer.band)}</div></div>
+    </div>` : '';
+
+  const layers = LAYERS.map(layer => {
+    const t = r.layers[layer.key];
+    const fields = APPLICANT_FIELDS[layer.key] || [];
+    const open = !!state.assessOpen[layer.key];
+    const statusText = {
+      passed: 'Passed', stopped: 'Stopped here', capped: 'Capped the limit',
+      routed: 'Routed', 'not-reached': 'Not reached', pending: 'Not reached',
+    }[t.status];
+    const statusClass = { passed: 'ok', stopped: 'stop', capped: 'cap', routed: 'route' }[t.status] || 'skip';
+    const all = [...t.checks, ...t.rules];
+    const failed = all.filter(x => x.state === 'fail').length;
+    const summary = t.status === 'not-reached'
+      ? 'An earlier layer decided the application, so this one never ran.'
+      : failed ? `${plural(failed, 'check')} did not pass` : `${plural(all.length, 'check')} run, all passed`;
+    return `
+    <div class="alayer alayer-${statusClass}">
+      <button class="alayer-head" data-action="assess-layer" data-layer="${layer.key}" aria-expanded="${open ? 'true' : 'false'}"
+        aria-label="${esc(`${layer.num} ${layer.title}: ${statusText}. ${summary}`)}">
+        <span class="chip layer-num">${esc(layer.num)}</span>
+        <span class="alayer-text">
+          <span class="alayer-title">${esc(layer.title)}</span>
+          <span class="alayer-sum">${esc(summary)}</span>
+        </span>
+        <span class="alayer-status">${esc(statusText)}</span>
+        <span class="path-chev" aria-hidden="true">${open ? '▲' : '▼'}</span>
+      </button>
+      ${open ? `
+      <div class="alayer-body">
+        ${t.note ? `<p class="layer-intro">${esc(t.note)}</p>` : ''}
+        ${all.length ? all.map(checkLine).join('') : `<div class="chk chk-unset"><span class="chk-mark" aria-hidden="true">·</span><div class="chk-text"><div class="chk-detail">Nothing configured in this layer yet, so nothing was checked.</div></div></div>`}
+        ${fields.length ? `
+        <h4 class="path-sub">What this layer reads about the customer</h4>
+        <div class="afields">
+          ${fields.map(f => `
+          <div class="afield">
+            <label class="afield-label" for="af-${esc(f.key)}">${esc(f.label)}</label>
+            ${applicantEditor(f)}
+          </div>`).join('')}
+        </div>` : ''}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="assess-screen">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Assess a customer</h1>
+      <p class="page-desc" style="max-width:680px;">One applicant, run down L0 to L6 in the order the engine evaluates. Every threshold comes from this profile's own draft, so a change on the waterfall shows up here immediately.</p>
+    </div>
+  </div>
+
+  <div class="preset-bar">
+    <span class="preset-label">Start from</span>
+    <div class="preset-tabs">${presets}</div>
+    <button class="btn btn-outline btn-sm" data-action="app-reset">Reset this applicant</button>
+  </div>
+  <div class="preset-hint">${esc(APPLICANT_PRESETS[state.presetIdx] ? APPLICANT_PRESETS[state.presetIdx].hint : '')}</div>
+
+  <div class="card panel outcome-card" style="border-left:4px solid ${oc[1]};">
+    <div class="outcome-top">
+      <div style="min-width:0;">
+        <div class="outcome-kicker">Outcome at ${esc(r.outcome.at)} · routed as ${esc(r.routeLabel.toLowerCase())}</div>
+        <div class="outcome-label" style="color:${oc[1]};">${esc(r.outcome.label)}</div>
+        <div class="outcome-why">${esc(r.outcome.why)}</div>
+      </div>
+      <span class="chip" style="background:${oc[0]};color:${oc[1]};border:1px solid ${oc[2]};">${esc(r.outcome.kind === 'approve' ? 'Offer made' : 'No offer')}</span>
+    </div>
+    ${offer}
+    ${rc ? `
+    <div class="outcome-rc">
+      <span class="rule-code">${esc(rc.code)}</span>
+      <div>
+        <div class="rc-label">${esc(rc.label)}</div>
+        ${rc.consumer ? `<div class="rc-consumer">Message to the customer: “${esc(rc.consumer)}”</div>`
+                      : `<div class="rc-consumer rc-none">No customer message. Agent and audit only.</div>`}
+      </div>
+      <span class="rc-note">emitted</span>
+    </div>` : ''}
+  </div>
+
+  ${r.coldStart ? renderColdStartTrace(r.coldStart) : renderLimitWaterfall(r)}
+
+  <h2 class="panel-title" style="margin:20px 0 4px 0;">The trace</h2>
+  <div class="panel-sub" style="margin-bottom:10px;">Open a layer to see every check it ran and to change what the customer looks like. Any layer can stop the process, so once one does, the rest are not reached.</div>
+  <div class="alayers">${layers}</div>
   </div>`;
 }
 
@@ -2093,6 +2887,13 @@ function stepState(key) {
       if (invalid) return { state: 'partial', note: `${invalid} condition${invalid === 1 ? '' : 's'} need attention` };
       return { state: 'done', note: 'All parameters set' };
     }
+    // Assessing is a check rather than a setting, so this step is complete once
+    // an applicant has actually been run and the note carries what it concluded.
+    case 'assess': {
+      if (!c.touched.assess) return { state: 'todo', note: 'No customer assessed yet' };
+      const r = assess();
+      return { state: 'done', note: `${r.outcome.label} at ${r.outcome.at}` };
+    }
     case 'simulate':
       return c.touched.simulate ? { state: 'done', note: 'Simulation run' } : { state: 'todo', note: 'Not run yet' };
     case 'publish': {
@@ -2148,6 +2949,7 @@ function renderStepFooter() {
 
 const TAB_RENDERERS = {
   waterfall: () => renderWaterfall(),
+  assess: () => renderAssess(),
   simulate: () => renderSimulate(),
   versions: () => renderVersions(),
 };
@@ -2765,6 +3567,7 @@ function openProfile(idx, mode, tab) {
     state.showBanner = !state.bannerSeen[state.profileIdx];
     state.bannerSeen[state.profileIdx] = true;
   }
+  if (state.profileTab === 'assess') cfg().touched.assess = true;
   render();
 }
 
@@ -2779,6 +3582,7 @@ function announceStep(key) {
 
 function goToTab(key) {
   state.profileTab = key;
+  if (key === 'assess') cfg().touched.assess = true;
   state.confirmRemove = null;
   state.setupNag = false;
   render();
@@ -2792,7 +3596,7 @@ function goToTab(key) {
 // matches several elements and focus lands on the wrong one, or on a disabled one.
 const FOCUS_KEYS = ['change', 'action', 'input', 'nav', 'tab', 'step', 'section',
   'rule', 'entry', 'gate', 'key', 'code', 'param', 'list', 'field', 'col', 'row',
-  'val', 'type', 'idx', 'handle'];
+  'val', 'type', 'idx', 'handle', 'layer', 'path'];
 
 function focusSignature(el) {
   if (!el || el === document.body || !$view.contains(el)) return null;
@@ -2834,7 +3638,7 @@ document.addEventListener('click', (e) => {
   // Delegation reads e.target.closest; a non-Element target (a synthetic event
   // dispatched on document) would otherwise throw.
   if (!(e.target instanceof Element)) return;
-  const layerLink = e.target.closest('[data-layer]:not(.layer-card)');
+  const layerLink = e.target.closest('[data-layer]:not(.layer-card):not([data-action])');
   if (layerLink && layerLink.dataset.layer && !layerLink.closest('.layer-card > .section-head')) {
     const k = layerLink.dataset.layer;
     if (LAYER_KEYS.includes(k)) {
@@ -3016,8 +3820,26 @@ document.addEventListener('click', (e) => {
       state.profileTab = 'rules';
       announce('Opened the Credit ladder section in Rules.');
       render(); break;
-    case 'di-sample':
-      state.diSample = Number(el.dataset.idx); render(); break;
+    /* ---------- Assess a customer ---------- */
+    case 'assess-layer':
+      state.assessOpen[el.dataset.layer] = !state.assessOpen[el.dataset.layer];
+      render(); break;
+    case 'app-preset': {
+      state.presetIdx = Number(el.dataset.idx);
+      state.applicant = { ...APPLICANT_BASE, ...APPLICANT_PRESETS[state.presetIdx].values };
+      cfg().touched.assess = true;
+      const r = assess();
+      announce(`${APPLICANT_PRESETS[state.presetIdx].name} loaded. ${r.outcome.label} at ${r.outcome.at}.`);
+      render(); break;
+    }
+    case 'app-reset':
+      state.applicant = { ...APPLICANT_BASE, ...APPLICANT_PRESETS[state.presetIdx].values };
+      announce(`Applicant reset to ${APPLICANT_PRESETS[state.presetIdx].name}.`);
+      render(); break;
+    case 'app-toggle':
+      applicantState()[el.dataset.field] = !applicantState()[el.dataset.field];
+      cfg().touched.assess = true;
+      render(); break;
     case 'setup-step': {
       const step = el.dataset.step;
       if (step === 'publish') {
@@ -3137,7 +3959,7 @@ document.addEventListener('click', (e) => {
           coldStart: makeColdStart('n' + Date.now(), COLDSTART_BLANK),
           layers: structuredClone(LAYER_SEEDS.blank),
           limits: structuredClone(LIMITS_EMPTY),
-          touched: { simulate: false },
+          touched: { simulate: false, assess: false },
         },
       });
       state.createOpen = false;
@@ -3216,6 +4038,14 @@ document.addEventListener('change', (e) => {
     case 'val-cat': setRule(el.dataset.rule, 'value', el.value); break;
     case 'sim-pop':
       state.simPopIdx = Number(el.value) || 0; render(); break;
+    // An applicant field. Blank is kept blank: it means "not known about this
+    // customer", which the trace reports rather than reading as zero.
+    case 'app-field': {
+      const raw = String(el.value ?? '').trim();
+      applicantState()[el.dataset.field] = raw;
+      cfg().touched.assess = true;
+      render(); break;
+    }
     case 'lim-field': {
       const list = cfg().limits[el.dataset.list];
       const f = list && list.find(x => x.key === el.dataset.key);

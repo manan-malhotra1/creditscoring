@@ -351,6 +351,118 @@ const RULES = [
   ['l6', 'pilotExposure', 'gte', '$1,000,000 launch maximum', 'throttle', true, 'P-02', 'RC-603'],
 ];
 
+// ---------------------------------------------------------------------------
+// Single-customer assessment
+//
+// One applicant, run down L0 to L6 in the order the engine evaluates, so the
+// credit team can see which layer stopped an application and which cap bound a
+// limit. Every field below is read by a setting or a condition somewhere in the
+// waterfall; nothing is collected that no layer consumes. Fields are grouped by
+// the layer that first reads them, and shown inside that layer's card.
+// ---------------------------------------------------------------------------
+
+const APPLICANT_FIELDS = {
+  l0: [
+    { key: 'featureCompleteness', label: 'Feature completeness', type: 'percent' },
+    { key: 'modelConfidence', label: 'Model confidence', type: 'percent' },
+    { key: 'scoreAgeDays', label: 'Age of the cached score', type: 'days' },
+    { key: 'activeDays90', label: 'Active days in the last 90', type: 'count', unit: 'days' },
+    { key: 'txnMonths', label: 'Months of transaction history', type: 'count', unit: 'months' },
+    { key: 'closedLoans', label: 'Previous loans closed', type: 'count', unit: 'loans' },
+    { key: 'inflow', label: 'Average monthly inflow', type: 'currency' },
+    { key: 'consistency', label: 'Cashflow consistency', type: 'ratio', unit: 'index' },
+    { key: 'volatility', label: 'Balance volatility', type: 'ratio', unit: 'coefficient' },
+  ],
+  l1: [
+    { key: 'age', label: 'Customer age', type: 'count', unit: 'years' },
+    { key: 'kyc', label: 'KYC status', type: 'select', param: 'kyc' },
+    { key: 'account', label: 'Account status', type: 'select', param: 'account' },
+    { key: 'blocklist', label: 'Fraud blocklist', type: 'select', param: 'blocklist' },
+    { key: 'walletAgeDays', label: 'Wallet account age', type: 'days' },
+    { key: 'daysSinceLastTxn', label: 'Days since the last transaction', type: 'days' },
+    { key: 'activeLoans', label: 'Loans open right now', type: 'count', unit: 'loans' },
+    { key: 'currentDpd', label: 'Days past due on any open loan', type: 'days' },
+    { key: 'monthsSincePriorDefault', label: 'Months since a prior default', type: 'count', unit: 'months', blankLabel: 'never defaulted' },
+    { key: 'productExposure', label: 'Open balance on this product', type: 'currency' },
+    { key: 'isStaff', label: 'Staff or related party', type: 'toggle' },
+  ],
+  l2: [
+    { key: 'simAgeDays', label: 'SIM age', type: 'days' },
+    { key: 'daysSinceSimSwap', label: 'Days since a SIM swap', type: 'days', blankLabel: 'no swap on record' },
+    { key: 'deviceChanges6m', label: 'Device changes in 6 months', type: 'count', unit: 'changes' },
+    { key: 'applications30d', label: 'Applications in 30 days', type: 'count', unit: 'applications' },
+    { key: 'daysSinceProfileChange', label: 'Days since a KYC or contact change', type: 'days', blankLabel: 'no recent change' },
+    { key: 'inflowSpike', label: 'Inflow spike before applying', type: 'ratio', unit: 'x the 90-day average' },
+    { key: 'walletsOnDevice', label: 'Wallets sharing this device', type: 'count', unit: 'wallets' },
+    { key: 'dormantThenActive', label: 'Dormant, then suddenly active', type: 'toggle' },
+  ],
+  l3: [
+    { key: 'score', label: 'Model score', type: 'count', unit: 'points' },
+    { key: 'onTimeInstalments', label: 'On-time instalments paid', type: 'count', unit: 'instalments' },
+    { key: 'arrearsDays90', label: 'Days in arrears in the last 90', type: 'days' },
+  ],
+  l4: [
+    { key: 'income', label: 'Inferred monthly income', type: 'currency' },
+    { key: 'expenses', label: 'Estimated monthly expenses', type: 'currency' },
+    { key: 'otherInstalments', label: 'Instalments on other loans', type: 'currency' },
+    { key: 'incomeConfidence', label: 'Confidence in the income estimate', type: 'percent' },
+    { key: 'incomeCoV', label: 'Income variability', type: 'ratio', unit: 'coefficient of variation' },
+  ],
+  l5: [
+    { key: 'totalExposure', label: 'Total balance across all products', type: 'currency' },
+  ],
+  l6: [
+    { key: 'approvalsToday', label: 'Approvals so far today', type: 'count', unit: 'approvals' },
+    { key: 'disbursedToday', label: 'Value disbursed so far today', type: 'currency' },
+    { key: 'thinShareToday', label: 'Thin-file share of today’s approvals', type: 'percent' },
+  ],
+};
+
+const APPLICANT_FIELD_LIST = Object.entries(APPLICANT_FIELDS)
+  .flatMap(([layer, list]) => list.map(f => ({ ...f, layer })));
+const APPLICANT_FIELD = Object.fromEntries(APPLICANT_FIELD_LIST.map(f => [f.key, f]));
+
+// A steady repeat customer. Presets below change only the handful of fields
+// that make their point, so what each one is testing stays visible.
+const APPLICANT_BASE = {
+  featureCompleteness: '92', modelConfidence: '88', scoreAgeDays: '1',
+  activeDays90: '46', txnMonths: '26', closedLoans: '2',
+  inflow: '290', consistency: '0.72', volatility: '0.42',
+  age: '34', kyc: 'Fully verified (Tier 2)', account: 'Active', blocklist: 'No match',
+  walletAgeDays: '790', daysSinceLastTxn: '1', activeLoans: '0', currentDpd: '0',
+  monthsSincePriorDefault: '', productExposure: '0', isStaff: false,
+  simAgeDays: '640', daysSinceSimSwap: '', deviceChanges6m: '0', applications30d: '1',
+  daysSinceProfileChange: '', inflowSpike: '1.1', walletsOnDevice: '1', dormantThenActive: false,
+  score: '642', onTimeInstalments: '6', arrearsDays90: '0',
+  income: '260', expenses: '90', otherInstalments: '0', incomeConfidence: '88', incomeCoV: '0.28',
+  totalExposure: '0',
+  approvalsToday: '410', disbursedToday: '12500', thinShareToday: '22',
+};
+
+// Each preset changes only the handful of fields that make its point, and each
+// is chosen to leave the waterfall somewhere different, so the trace can be
+// read against a known expectation.
+const APPLICANT_PRESETS = [
+  { name: 'Established', hint: 'Long history, good score, comfortable income. The band decides the offer and nothing later cuts it.',
+    values: {} },
+  { name: 'Thin file', hint: 'Real but short history. L0 routes away from the model and the starter limit sets the offer.',
+    values: { featureCompleteness: '48', modelConfidence: '52', activeDays90: '9', txnMonths: '2',
+              closedLoans: '0', inflow: '95', consistency: '0.42', walletAgeDays: '120',
+              score: '305', onTimeInstalments: '0', income: '110', expenses: '40', incomeConfidence: '74' } },
+  { name: 'Brand new', hint: 'Wallet opened five weeks ago, no history at all. The cold-start branch runs, so there is still an offer.',
+    values: { featureCompleteness: '4', modelConfidence: '11', activeDays90: '0', txnMonths: '0',
+              closedLoans: '0', inflow: '0', consistency: '', volatility: '', walletAgeDays: '35',
+              simAgeDays: '35', score: '', income: '', expenses: '', incomeConfidence: '' } },
+  { name: 'Not verified', hint: 'Everything else is fine, but KYC is only SIM-registered. Whether L1 stops it depends on what this product accepts.',
+    values: { kyc: 'SIM-registered (Tier 1)' } },
+  { name: 'Shared device', hint: 'One handset, four wallets. Where the product finances a device, L2 refers rather than declines, because fraud rules catch genuine customers too.',
+    values: { walletsOnDevice: '4' } },
+  { name: 'Low score', hint: 'Eligible and honest, but the score sits below every band floor. L3 decides.',
+    values: { score: '85', consistency: '0.31', onTimeInstalments: '1', arrearsDays90: '22', income: '120', expenses: '60' } },
+  { name: 'Stretched', hint: 'Good score, little room in the budget. L4 cuts the limit well below what the band allows.',
+    values: { income: '150', expenses: '55', otherInstalments: '20', incomeConfidence: '78', incomeCoV: '0.45' } },
+];
+
 const BAND_COLORS = ['#98A2B3', '#48C2CF', '#3D8DBE', '#144989', '#172E7B'];
 
 const NAV_TOP = [
@@ -368,6 +480,7 @@ const NAV_GLOBAL = [
 // already exists; the last one is the publish action rather than a tab.
 const SETUP_STEPS = [
   { key: 'waterfall', label: 'Decision waterfall', hint: 'Set every parameter, L0 to L6, in the order the engine evaluates them' },
+  { key: 'assess', label: 'Assess a customer', hint: 'Run one applicant down the waterfall and see which layer decided' },
   { key: 'simulate', label: 'What-if simulation', hint: 'Check the impact before it goes live' },
   { key: 'publish', label: 'Publish', hint: 'Send to a checker for approval', action: true },
 ];
@@ -378,6 +491,7 @@ const PUBLISH_PREREQS = ['waterfall'];
 // Order matches SETUP_STEPS: the tabs are the set-up sequence.
 const PROFILE_TABS = [
   ['waterfall', 'Decision waterfall'],
+  ['assess', 'Assess a customer'],
   ['simulate', 'What-if simulation'],
   ['versions', 'Versions'],
 ];
@@ -449,7 +563,7 @@ const USERS = [
 // Airtime Advance: small instant top-up credit, with its own rule set and bands.
 const AA_RULES = [
   ['l1', 'age', 'gte', '18 years', 'pass', true, 'E-01', 'RC-101'],
-  ['l1', 'kyc', 'eq', 'SIM-registered (Tier 1)', 'pass', true, 'E-02', 'RC-102'],
+  ['l1', 'kyc', 'in', 'Fully verified (Tier 2), SIM-registered (Tier 1)', 'pass', true, 'E-02', 'RC-102'],
   ['l1', 'account', 'in', 'Active', 'pass', true, 'E-03', 'RC-103'],
   ['l1', 'blocklist', 'eq', 'No match', 'pass', true, 'E-04', 'RC-501'],
   ['l0', 'txnMonths', 'gte', '1 month', 'pass', true, 'D-01', 'RC-301'],
@@ -567,35 +681,6 @@ const MODEL_HEALTH = {
 // Decision explanation samples. Each names the rule (by rule code) that actually
 // fired; the emitted reason code is resolved live from that rule's own setting,
 // so reasons always track the rules rather than a hand-authored mapping.
-const SAMPLE_DECISIONS = [
-  {
-    id: 'sd1', name: 'Applicant A', summary: '24 · wallet 4 months · 2 months of history · score not computed',
-    outcome: 'Routed to cold-start', outcomeKind: 'route',
-    firedRule: 'D-01',
-    detail: 'Cleared the non-negotiable eligibility gates, then failed the L0 data check: 2 months of transaction history against a 3-month threshold. That is a routing decision, not a decline. The scored path is skipped and the customer is handled on the thin-file path instead.',
-  },
-  {
-    id: 'sd2', name: 'Applicant B', summary: '31 · wallet 14 months · score 305 · 3 months history',
-    outcome: 'Approve at thin-file cap', outcomeKind: 'approve',
-    factors: ['RC-802', 'RC-801', 'RC-803'],
-    boundRule: 'D-03', boundLabel: 'capped at the thin-file ceiling',
-    detail: 'All gates passed and coverage was satisfied, so this customer was scored normally. Cashflow consistency was weak enough for the coverage rule to cap the limit at the thin-file ceiling before affordability bound it.',
-  },
-  {
-    id: 'sd3', name: 'Applicant C', summary: '38 · wallet 3 years · score 642 · income $180',
-    outcome: 'Approve', outcomeKind: 'approve',
-    factors: ['RC-801', 'RC-804', 'RC-803'],
-    boundRule: 'A-01', boundLabel: 'capped by affordability',
-    detail: 'All gates passed. The band gave a $350 starting limit; the affordability ratio trimmed it to $45 per month of instalment capacity.',
-  },
-  {
-    id: 'sd4', name: 'Applicant D', summary: '29 · device seen on 4 wallets this month',
-    outcome: 'Refer for manual review', outcomeKind: 'refer',
-    firedRule: 'F-03',
-    detail: 'Gates passed, but the device-cluster check matched 4 wallets on one handset and routed the application to manual review.',
-  },
-];
-
 // Fallback scorecard: rule-based scoring when the ML model has no reliable score.
 // Seeded per profile; signals reference the shared parameter definitions.
 const FALLBACK_SEED = {
