@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sasai Credit: Rule Engine Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  .vbadge {
+    position: fixed; right: 14px; bottom: 14px; z-index: 90;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; border-radius: 20px;
+    font: 600 12px Montserrat, Arial, sans-serif;
+    box-shadow: 0 4px 14px rgba(16,24,40,0.18);
+  }
+  .vbadge a { font-weight: 600; text-decoration: underline; }
+  .vbadge-v1 { background: #FFF8E6; border: 1px solid #F5DFA5; color: #7A5B12; }
+  .vbadge-v1 a { color: #7A5B12; }
+  .vbadge-v2 { background: #ECFDF3; border: 1px solid #ABEFC6; color: #067647; }
+  .vbadge-v2 a { color: #067647; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">S</div>
+      <div>
+        <div class="brand-name">Sasai Credit</div>
+        <div class="brand-sub">Rule Engine Console</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav" id="nav">
+      <div class="nav-heading">Configure</div>
+    </nav>
+
+    <div class="sidebar-user">
+      <div class="user-avatar">TM</div>
+      <div class="user-meta">
+        <div class="user-name">T. Moyo</div>
+        <div class="user-role">Credit Risk, Maker</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <header class="topbar" id="topbar"></header>
+
+    <div class="content" id="view"></div>
+
+  </main>
+
+  <div id="modal"></div>
+
+  <div id="a11y-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+</div>
+
+<div class="vbadge vbadge-v2"><span>v2 · L0–L6 waterfall</span><a href="../v1/">see v1</a><a href="../">compare</a></div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

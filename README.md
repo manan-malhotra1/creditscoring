@@ -7,7 +7,22 @@ across every product and configured once.
 
 **Live:** https://credit-rule-console.web.app
 
-## How it is organised
+## Two builds
+
+The site serves both structures so they can be compared:
+
+| | | |
+|---|---|---|
+| [`/`](https://credit-rule-console.web.app/) | Chooser | Side-by-side summary of what differs |
+| [`/v1/`](https://credit-rule-console.web.app/v1/) | Six-tab build | Configuration grouped by topic, roughly 40 parameters |
+| [`/v2/`](https://credit-rule-console.web.app/v2/) | L0 to L6 waterfall | One spine in evaluation order, roughly 80 parameters |
+
+v1 is the build as it stood at commit `63ce862`, kept unchanged apart from a
+corner badge for switching between the two. v2 is the current work and is where
+new development happens. Both share the same Global setup, maker-checker,
+versioning and audit behaviour; only the per-product configuration differs.
+
+## How v2 is organised
 
 The sidebar holds only what is shared. Everything product-specific lives inside
 a selected profile, as a numbered set-up sequence:
@@ -81,7 +96,15 @@ firebase deploy --only hosting:credit-console
 
 ## Files
 
+```
+index.html        the chooser landing page
+v1/               the six-tab build, frozen at commit 63ce862
+v2/               the L0 to L6 waterfall build, where development continues
+```
+
+Each build is four files:
+
 - `index.html`: page shell (sidebar, top bar, view container, live region)
 - `styles.css`: all styling
-- `data.js`: parameter catalogue, section scoping, reason codes, seed profiles
+- `data.js`: layer definitions, parameter catalogue, reason codes, seed profiles
 - `app.js`: state, per-screen renderers, derivations, and event delegation
