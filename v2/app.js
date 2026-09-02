@@ -73,6 +73,8 @@ const state = {
   fbPreview: null,           // fallback-scorecard sample customer (per open profile)
   diSample: 0,               // selected sample in the Decision explanation preview
   layerShowAll: {},          // per layer: show every setting, not just essentials
+  pathOpen: { scored: false, thin: false, insufficient: false },
+  rowOpen: {},               // condition rows whose details are expanded
   showOpenOnly: false,       // filter to parameters still needing a value
   overlapTag: null,          // which overlap group is expanded
   // Global reason-code catalogue: wording only, shared by every profile.
@@ -1562,73 +1564,6 @@ function renderFallback(part) {
 }
 
 
-function ruleRowHtml(r, key) {
-      const badParam = !paramValidIn(r.param, key);
-      const badAction = !actionValidIn(r.action, key);
-      const badOp = !operatorValidFor(r.op, r.param);
-      const warnings = [
-        badParam ? `Parameter <strong>${esc(labelOf(r.param))}</strong> is not valid in ${esc(title)}. Pick a parameter tagged for this section, or add the tag in <span class="nav-link" data-nav="params">Global setup</span>.` : '',
-        badAction ? `Action <strong>${esc(ACTLABEL[r.action] || r.action)}</strong> is not available in ${esc(title)}.` : '',
-        badOp && !badParam ? `Operator <strong>${esc(OPLABEL[r.op] || r.op)}</strong> does not apply to a ${esc(paramDef(r.param) ? paramDef(r.param).type : 'this')} parameter.` : '',
-      ].filter(Boolean);
-
-      // Keep an out-of-scope selection visible rather than silently dropping it.
-      const paramOptions = PARAM_GROUPS.map(([g, gLabel]) => {
-        const opts = paramsForSection(key).filter(d => d.group === g);
-        return opts.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(opts.map(d => [d.key, d.label]), r.param)}</optgroup>` : '';
-      }).join('') + (badParam
-        ? `<optgroup label="Not valid in this section"><option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} (not valid here)</option></optgroup>`
-        : '');
-
-      const opOptions = optionGroup(operatorsForParam(r.param), r.op)
-        + (badOp ? `<option value="${esc(r.op)}" selected>${esc(OPLABEL[r.op] || r.op)} (not valid here)</option>` : '');
-
-      const actionOptions = optionGroup(actionsForSection(key), r.action)
-        + (badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} (not valid here)</option>` : '');
-
-      const confirming = state.confirmRemove === r.id;
-  return `
-      <div class="rule-row${warnings.length ? ' rule-row-warn' : ''}" style="background:${r.enabled ? '#fff' : '#FCFCFD'};">
-        <div class="rule-inner">
-          <button class="switch${r.enabled ? ' on' : ''}" data-action="toggle-rule" data-rule="${r.id}"
-            role="switch" aria-checked="${r.enabled ? 'true' : 'false'}"
-            aria-label="Rule ${esc(r.code)} enabled: ${esc(sentence(r))}"
-            title="Enable or disable this rule"><span class="knob"></span></button>
-          <div style="flex:1;min-width:0;">
-            <div class="rule-sentence" style="color:${r.enabled ? '#101828' : '#5D6B82'};">${esc(sentence(r))}</div>
-            <div class="rule-controls">
-              <select class="rule-param${badParam ? ' field-invalid' : ''}" data-change="rule-param" data-rule="${r.id}"
-                aria-label="Parameter for rule ${esc(r.code)}">${paramOptions}</select>
-              <select class="rule-op${badOp ? ' field-invalid' : ''}" data-change="rule-op" data-rule="${r.id}"
-                aria-label="Test for rule ${esc(r.code)}, ${esc(labelOf(r.param))}">${opOptions}</select>
-              ${valueEditor(r)}
-              <span class="rule-then">then</span>
-              <select class="rule-action${badAction ? ' field-invalid' : ''}" data-change="rule-action" data-rule="${r.id}"
-                aria-label="Action for rule ${esc(r.code)}">${actionOptions}</select>
-              <span class="rule-code">${esc(r.code)}</span>
-            </div>
-            ${warnings.map(w => `<div class="rule-warn">⚠ ${w}</div>`).join('')}
-            <div class="rule-rc-row">
-              <span class="rule-rc-label">Reason code</span>
-              <select class="rule-rc" data-change="rule-rc" data-rule="${r.id}"
-                aria-label="Reason code emitted by rule ${esc(r.code)}"
-                title="Code the engine emits when this rule determines the outcome">
-                <option value=""${r.rc ? '' : ' selected'}>(no code)</option>
-                ${state.reasonCodes.filter(c => c.kind === 'rule' && (c.active || c.code === r.rc))
-                  .map(c => `<option value="${esc(c.code)}"${c.code === r.rc ? ' selected' : ''}>${esc(c.code)} · ${esc(c.label)}${c.active ? '' : ' (inactive)'}</option>`).join('')}
-              </select>
-              <span class="rule-rc-hint">emitted automatically when this rule decides the outcome</span>
-            </div>
-          </div>
-          ${confirming
-            ? `<button class="rule-remove confirming" data-action="remove-rule-confirm" data-rule="${r.id}"
-                 aria-label="Confirm removing rule ${esc(r.code)}" title="Click again to remove rule ${esc(r.code)}">Remove?</button>`
-            : `<button class="rule-remove" data-action="remove-rule" data-rule="${r.id}"
-                 aria-label="Remove rule ${esc(r.code)}" title="Remove rule">×</button>`}
-        </div>
-      </div>`;
-}
-
 /* ---------- The decision waterfall ---------- */
 
 // A layer setting still waiting on a value from the credit team.
@@ -1723,24 +1658,96 @@ function settingEditor(layerKey, d) {
   </span>`;
 }
 
-function settingRow(layerKey, d) {
-  const val = settingValue(layerKey, d.key);
-  const open = settingNeedsValue(d, val);
+
+
+/* ---------- One row type for every parameter ---------- */
+
+// Settings and conditions are the same thing: a parameter with a value. They
+// render identically. What a condition carries extra (operator, action, reason
+// code) hides behind a details disclosure, because it is rarely changed.
+function paramRow(opts) {
+  const { id, name, meaning, control, tags = '', on = null, onAction = '', details = '', open = false, warn = '' } = opts;
   return `
-  <div class="field-row${open ? ' needs-value' : ''}">
-    <div style="flex:1;min-width:0;">
-      <div class="field-label">${esc(d.label)}
-        ${d.essential ? '<span class="tag-essential">Credit team</span>' : ''}
-        ${open ? '<span class="tag-open">Needs a value</span>' : ''}
-        ${d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}" title="Set in more than one layer">Also set elsewhere</button>` : ''}
+  <div class="prow${warn ? ' prow-warn' : ''}${on === false ? ' prow-off' : ''}">
+    <div class="prow-main">
+      ${on === null ? '' : `
+        <button class="switch${on ? ' on' : ''}" style="margin-top:0;" ${onAction}
+          role="switch" aria-checked="${on ? 'true' : 'false'}"
+          aria-label="${esc(name)} enabled"><span class="knob"></span></button>`}
+      <div class="prow-text">
+        <div class="prow-name">${esc(name)}${tags}</div>
+        <div class="prow-meaning">${meaning}</div>
       </div>
-      <div class="field-hint" style="text-wrap:pretty;">${esc(d.meaning)}</div>
+      <div class="prow-value">${control}</div>
+      ${details ? `
+        <button class="prow-more${open ? ' is-open' : ''}" data-action="row-details" data-row="${esc(id)}"
+          aria-expanded="${open ? 'true' : 'false'}" aria-label="More options for ${esc(name)}">${open ? 'Less' : 'More'}</button>` : ''}
     </div>
-    ${settingEditor(layerKey, d)}
+    ${warn ? `<div class="prow-warnline">${warn}</div>` : ''}
+    ${details && open ? `<div class="prow-details">${details}</div>` : ''}
   </div>`;
 }
 
-/* ---------- Score bands, inside L3 ---------- */
+// A layer setting, as a parameter row.
+function settingRow(layerKey, d) {
+  const val = settingValue(layerKey, d.key);
+  const needs = settingNeedsValue(d, val);
+  const tags = [
+    d.essential ? '<span class="tag-essential">Credit team</span>' : '',
+    needs ? '<span class="tag-open">Needs a value</span>' : '',
+    d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}">Also set at another layer</button>` : '',
+  ].join('');
+  return paramRow({
+    id: `${layerKey}.${d.key}`, name: d.label, meaning: esc(d.meaning),
+    control: settingEditor(layerKey, d), tags,
+    warn: needs ? '' : '',
+  });
+}
+
+// A condition, as the same parameter row. The sentence is the meaning.
+function conditionRow(r, layerKey) {
+  const badParam = !paramValidIn(r.param, layerKey);
+  const badAction = !actionValidIn(r.action, layerKey);
+  const badOp = !operatorValidFor(r.op, r.param);
+  const warn = badParam
+    ? `⚠ <strong>${esc(labelOf(r.param))}</strong> is not available at ${esc(layerKey.toUpperCase())}.`
+    : badAction ? `⚠ <strong>${esc(ACTLABEL[r.action] || r.action)}</strong> is not available at ${esc(layerKey.toUpperCase())}.`
+    : badOp ? `⚠ <strong>${esc(OPLABEL[r.op] || r.op)}</strong> does not apply to this kind of value.` : '';
+
+  const paramOptions = PARAM_GROUPS.map(([g, gLabel]) => {
+    const o = paramsForSection(layerKey).filter(d => d.group === g);
+    return o.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(o.map(d => [d.key, d.label]), r.param)}</optgroup>` : '';
+  }).join('') + (badParam ? `<option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} (not available here)</option>` : '');
+
+  const details = `
+    <div class="pd-grid">
+      <label class="pd-field"><span>What to check</span>
+        <select data-change="rule-param" data-rule="${r.id}" aria-label="Parameter for rule ${esc(r.code)}">${paramOptions}</select></label>
+      <label class="pd-field"><span>Test</span>
+        <select data-change="rule-op" data-rule="${r.id}" aria-label="Test for rule ${esc(r.code)}">${optionGroup(operatorsForParam(r.param), r.op)}</select></label>
+      <label class="pd-field"><span>Then</span>
+        <select data-change="rule-action" data-rule="${r.id}" aria-label="Outcome for rule ${esc(r.code)}">${optionGroup(actionsForSection(layerKey), r.action)}${badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} (not available here)</option>` : ''}</select></label>
+      <label class="pd-field pd-wide"><span>Reason code recorded if this decides the outcome</span>
+        <select data-change="rule-rc" data-rule="${r.id}" aria-label="Reason code for rule ${esc(r.code)}">
+          <option value=""${r.rc ? '' : ' selected'}>(no code)</option>
+          ${state.reasonCodes.filter(c => c.kind === 'rule' && (c.active || c.code === r.rc))
+            .map(c => `<option value="${esc(c.code)}"${c.code === r.rc ? ' selected' : ''}>${esc(c.code)} · ${esc(c.label)}</option>`).join('')}
+        </select></label>
+    </div>
+    <div class="pd-foot">
+      <span class="rule-code">${esc(r.code)}</span>
+      <button class="btn btn-outline btn-sm" data-action="remove-rule" data-rule="${r.id}">Remove this condition</button>
+    </div>`;
+
+  return paramRow({
+    id: r.id, name: labelOf(r.param), meaning: esc(sentence(r)),
+    control: valueEditor(r), tags: '', on: r.enabled,
+    onAction: `data-action="toggle-rule" data-rule="${r.id}"`,
+    details, open: !!state.rowOpen[r.id], warn,
+  });
+}
+
+/* ---------- Score bands ---------- */
 
 function renderBandTable() {
   const bands = cfg().bands;
@@ -1818,6 +1825,74 @@ function renderBandTable() {
 }
 
 
+
+/* ---------- L0: the three paths, each with its own configuration ---------- */
+
+function draftRef(ref) {
+  return ref ? `<span class="draft-ref" title="Section of the Technodysis rule engine draft">draft ${esc(ref)}</span>` : '';
+}
+
+function pathPanel(layer) {
+  const c = cfg();
+  const thin = layer.thinFile || [];
+  const csOn = c.coldStart.gates.length;
+  const fbOn = c.fallback.entries.filter(e => e.enabled).length;
+  const t = c.fallback.tiers;
+
+  const paths = [
+    {
+      key: 'scored', label: 'Scored', ref: '§2',
+      lead: 'Enough data to use the model. Continues to L1, then scored normally at L3.',
+      summary: `${(layer.settings || []).length} thresholds`,
+      body: () => `
+        <p class="path-note">These thresholds decide whether the model score can be trusted at all. Fail any and the customer drops to one of the paths below.</p>
+        ${(layer.settings || []).map(d => settingRow(layer.key, d)).join('')}`,
+    },
+    {
+      key: 'thin', label: 'Thin file', ref: '§5.1',
+      lead: 'Some data, but not enough to score reliably. Scored on points instead, and capped.',
+      summary: `${fbOn} signals · ladder to $${settingValue(layer.key, 'ladderCeiling') || '0'}`,
+      body: () => `
+        <p class="path-note">The engine does not guess. It awards points for whatever the customer can show, treats the total as a score on the same scale, and raises the limit only as they demonstrate repayment.</p>
+        ${renderFallback('points')}
+        ${renderFallback('coverage')}
+        <h4 class="path-sub">The ladder ${draftRef('§5.1')}</h4>
+        ${thin.map(d => settingRow(layer.key, d)).join('')}`,
+    },
+    {
+      key: 'insufficient', label: 'Insufficient data', ref: 'Ecocash extension',
+      lead: 'Too little data to score at all. A short, cautious path so no customer is permanently locked out.',
+      summary: `${csOn} light gates · defer ${c.coldStart.defer.retryDays} days`,
+      body: () => renderFallback('cold'),
+    },
+  ];
+
+  return `
+  <div class="paths">
+    <div class="paths-head">
+      <h3 class="panel-title">Which path does this customer take?</h3>
+      <div class="panel-sub">Exactly one of the three. Everything each path does is configured inside it.</div>
+    </div>
+    ${paths.map(p => {
+      const open = !!state.pathOpen[p.key];
+      return `
+      <div class="path path-${p.key}${open ? ' is-open' : ''}">
+        <button class="path-head" data-action="toggle-path" data-path="${p.key}" aria-expanded="${open ? 'true' : 'false'}">
+          <span class="path-dot"></span>
+          <span class="path-text">
+            <span class="path-label">${esc(p.label)} ${draftRef(p.ref)}</span>
+            <span class="path-lead">${esc(p.lead)}</span>
+          </span>
+          <span class="path-summary">${esc(p.summary)}</span>
+          <span class="path-chev" aria-hidden="true">${open ? '▲' : '▼'}</span>
+        </button>
+        ${open ? `<div class="path-body">${p.body()}</div>` : ''}
+      </div>`;
+    }).join('')}
+  </div>
+  ${renderFallback('preview')}`;
+}
+
 /* ---------- Waterfall screen ---------- */
 
 function layerRuleRows(layerKey) {
@@ -1827,7 +1902,7 @@ function layerRuleRows(layerKey) {
   return `
   <h3 class="panel-title" style="margin-top:18px;">Conditions</h3>
   <div class="panel-sub" style="margin-bottom:6px;">Each reads as a sentence. Parameters come from <span class="nav-link" data-nav="params">Global setup</span>; only those valid in ${esc(layerKey.toUpperCase())} are offered.</div>
-  ${rules.map(r => ruleRowHtml(r, layerKey)).join('')}
+  ${rules.map(r => conditionRow(r, layerKey)).join('')}
   <div class="add-rule-wrap" style="padding-left:0;">
     <button class="add-rule" data-action="add-rule" data-section="${layerKey}">+ Add condition to ${esc(layerKey.toUpperCase())}</button>
   </div>`;
@@ -1859,16 +1934,8 @@ function layerCard(layer, i) {
   const body = !open ? '' : `
   <div class="layer-body">
     <p class="layer-intro">${esc(layer.intro)}</p>
-    ${layer.key === 'l0' ? `
-      <div class="routing-outcomes">
-        ${ROUTING_OUTCOMES.map(([k, label, meaning]) => `
-          <div class="routing-outcome ro-${k}">
-            <div class="ro-label">${esc(label)}</div>
-            <div class="ro-meaning">${esc(meaning)}</div>
-          </div>`).join('')}
-      </div>` : ''}
 
-    ${defs.length ? `
+    ${defs.length && layer.key !== 'l0' ? `
       <div class="layer-settings-head">
         <h3 class="panel-title">Settings</h3>
         ${hidden > 0 || showAll ? `<button class="btn btn-outline btn-sm" data-action="layer-showall" data-list="${layer.key}">${showAll ? 'Show essentials only' : `Show all ${defs.length}`}</button>` : ''}
@@ -1877,10 +1944,10 @@ function layerCard(layer, i) {
       ${hidden > 0 && !showAll ? `<div class="layer-hidden-note">${hidden} more setting${hidden === 1 ? '' : 's'} hidden. These carry a working default and are rarely changed.</div>` : ''}
     ` : ''}
 
-    ${layer.key === 'l0' ? renderFallback('coverage') + renderFallback('cold') + renderFallback('preview') : ''}
-    ${layer.key === 'l3' ? renderBandTable() + renderFallback('points') : ''}
+    ${layer.key === 'l0' ? pathPanel(layer) : ''}
+    ${layer.key === 'l3' ? renderBandTable() : ''}
 
-    ${thin.length && visibleIn(thin).length ? `
+    ${false && thin.length && visibleIn(thin).length ? `
       <h3 class="panel-title" style="margin-top:18px;">Thin-file ladder</h3>
       <div class="panel-sub" style="margin-bottom:6px;">Where there is too little data to score reliably the engine does not guess. It offers a small, short, cautious amount and raises the limit as the customer demonstrates repayment. Every completed cycle produces exactly the repayment data the model needs.</div>
       ${visibleIn(thin).map(d => settingRow(layer.key, d)).join('')}
@@ -1905,7 +1972,7 @@ function layerCard(layer, i) {
       style="border-bottom:${open ? '1px solid #E4E7EC' : 'none'};">
       <div class="section-num layer-num">${esc(layer.num)}</div>
       <div style="min-width:0;">
-        <h2 class="section-title">${esc(layer.title)}</h2>
+        <h2 class="section-title">${esc(layer.title)} ${draftRef(layer.ref)}</h2>
         <div class="section-desc">${esc(layer.question)}</div>
       </div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
@@ -2854,6 +2921,12 @@ document.addEventListener('click', (e) => {
       store[el.dataset.key] = !store[el.dataset.key];
       markDirty(); render(); break;
     }
+    case 'toggle-path':
+      state.pathOpen[el.dataset.path] = !state.pathOpen[el.dataset.path];
+      render(); break;
+    case 'row-details':
+      state.rowOpen[el.dataset.row] = !state.rowOpen[el.dataset.row];
+      render(); break;
     case 'layer-showall':
       state.layerShowAll[el.dataset.list] = !state.layerShowAll[el.dataset.list];
       render(); break;

@@ -25,13 +25,13 @@ const SECTION_TAG_LABEL = Object.fromEntries(SECTION_TAGS);
 const PARAM_DEFS = [
   // Customer input signals: read directly from the wallet and KYC record
   { key: 'age', label: 'Customer age', group: 'input', type: 'duration', unit: 'years', sections: ['l1', 'fallback', 'coldstart'] },
-  { key: 'tenure', label: 'Wallet tenure', group: 'input', type: 'duration', unit: 'months', sections: ['l0', 'l1', 'l2', 'l3', 'fallback', 'coldstart'] },
+  { key: 'tenure', label: 'Wallet account age', group: 'input', type: 'duration', unit: 'months', sections: ['l0', 'l1', 'l2', 'l3', 'fallback', 'coldstart'] },
   { key: 'kyc', label: 'KYC status', group: 'input', type: 'category', values: ['Fully verified (Tier 2)', 'SIM-registered (Tier 1)', 'Unverified'], sections: ['l1', 'fallback', 'coldstart'] },
   { key: 'account', label: 'Account status', group: 'input', type: 'category', values: ['Active', 'Active-dormant <30d', 'Dormant', 'Suspended', 'Closed'], sections: ['l1', 'fallback', 'coldstart'] },
   { key: 'balance', label: 'Current wallet balance', group: 'input', type: 'currency', sections: ['l0', 'l3', 'fallback'] },
   { key: 'avgBalance', label: 'Average balance (90 days)', group: 'input', type: 'currency', sections: ['l0', 'l3', 'fallback'] },
   { key: 'device', label: 'Device type on file', group: 'input', type: 'category', values: ['Smartphone', 'Feature phone', 'Unknown'], sections: ['l1', 'l2', 'fallback', 'coldstart'] },
-  { key: 'sim', label: 'SIM tenure', group: 'input', type: 'duration', unit: 'days', sections: ['l1', 'l2', 'fallback', 'coldstart'] },
+  { key: 'sim', label: 'SIM age', group: 'input', type: 'duration', unit: 'days', sections: ['l1', 'l2', 'fallback', 'coldstart'] },
   // A match on this customer, not a portfolio counter, so it may gate eligibility.
   { key: 'blocklist', label: 'Fraud blocklist match', group: 'input', type: 'category', values: ['No match', 'Match', 'Under investigation'], sections: ['l1', 'l2', 'coldstart'] },
 
@@ -127,85 +127,14 @@ const ROUTING_OUTCOMES = [
 // essential: flagged in the draft as a commercial decision for the credit team.
 const LAYERS = [
   {
-    key: 'l0', num: 'L0', title: 'Data sufficiency and routing', canStop: true,
+    key: 'l0', num: 'L0', ref: '§2', title: 'Data sufficiency and routing', canStop: true,
     question: 'Is there enough data to score this customer at all?',
     intro: 'A model applied to a customer with almost no data still returns a number, and that number means nothing. This layer recognises the situation and routes it instead.',
-    settings: [
-      { key: 'featureCompleteness', label: 'Minimum feature completeness', type: 'percent', essential: false,
-        meaning: 'The share of the features the model needs that are actually available for this customer. If the model uses 40 features and 28 are present, completeness is 70 percent.' },
-      { key: 'minWalletTenure', label: 'Minimum wallet tenure', type: 'days', essential: false, overlap: 'tenure',
-        meaning: 'Days since the Ecocash account was opened. Behaviour observed over a short period is not reliable evidence.' },
-      { key: 'minTxnHistory', label: 'Minimum transaction history', type: 'count', unit: 'active days in 90', essential: false,
-        meaning: 'Distinct days in the last 90 on which the customer transacted. Measures genuine activity rather than a dormant account with one transaction.' },
-      { key: 'minLoanHistoryRepeat', label: 'Minimum loan history for repeat path', type: 'count', unit: 'closed loans', essential: false,
-        meaning: 'How many previous loans must be closed before a customer is treated as a repeat borrower rather than a new one.' },
-      { key: 'scoreStaleness', label: 'Score staleness limit', type: 'days', essential: false,
-        meaning: 'How old a cached score may be before it is out of date. Scores recalculate daily, so this mainly catches a pipeline failure going unnoticed.' },
-      { key: 'modelConfidenceFloor', label: 'Model confidence floor', type: 'percent', essential: true,
-        meaning: 'The model returns a confidence level alongside the score. Below this level the score is not trusted and the customer is routed to thin-file handling.' },
-    ],
-  },
-  {
-    key: 'l1', num: 'L1', title: 'Hard knockouts', canStop: true,
-    question: 'Is the customer eligible at all?',
-    intro: 'Absolute eligibility rules. They are not risk judgements and the score does not affect them. They run first because they are quick and they remove the customer entirely.',
-    settings: [
-      { key: 'priorDefaultLookback', label: 'Prior default lookback', type: 'months', essential: true,
-        meaning: 'Exclude a customer who has previously defaulted with Ecocash within this period. A lookback lets customers become eligible again over time; permanent exclusion is safer but permanently shrinks the base.' },
-      { key: 'concurrentLoanCap', label: 'Concurrent loan cap', type: 'count', unit: 'active loans', essential: true,
-        meaning: 'How many loans a customer may hold at once. Taking several loans simultaneously is one of the fastest routes to over-indebtedness.' },
-      { key: 'delinquentDpd', label: 'Currently delinquent threshold', type: 'days', essential: false,
-        meaning: 'Days past due on any active loan above which a new loan is refused.' },
-      { key: 'minAccountTenure', label: 'Minimum account tenure', type: 'days', essential: false, overlap: 'tenure',
-        meaning: 'Days since the account was opened, as an eligibility floor. Distinct from the L0 rule, which is a data-sufficiency floor.' },
-      { key: 'dormancyLimit', label: 'Dormancy limit', type: 'days', essential: false,
-        meaning: 'Maximum days since the last transaction of any kind. A customer inactive for longer is not currently engaged with the wallet.' },
-      { key: 'staffHandling', label: 'Staff and related parties', type: 'select', essential: false,
-        options: ['Refer to manual review', 'Exclude', 'No special handling'],
-        meaning: 'How employees and connected parties are treated. Usually routed to review rather than declined, for governance reasons.' },
-    ],
-  },
-  {
-    key: 'l2', num: 'L2', title: 'Fraud and first-payment-default screens', canStop: true,
-    question: 'Does the application carry identity risk?',
-    intro: 'A customer who never makes a single payment usually has not suffered a change in circumstances. The warning signs differ from credit warning signs, and so do the remedies. Most of these should refer rather than decline, because fraud rules always catch some genuine customers.',
-    settings: [
-      { key: 'minAccountAgeFraud', label: 'Minimum account age', type: 'days', essential: false, overlap: 'tenure',
-        meaning: 'Days since the wallet account was opened, applied specifically as a fraud control.' },
-      { key: 'simSwapWindow', label: 'Recent SIM swap window', type: 'days', essential: false,
-        meaning: 'Refer where the SIM has been swapped within this window. A recent swap can indicate an account takeover. SIM data may not be available; the control is kept for completeness.' },
-      { key: 'deviceChangeFreq', label: 'Device change frequency', type: 'count', unit: 'changes in 6 months', essential: false,
-        meaning: 'How many times the device on the account has changed. Frequent changes can indicate device resale, which matters directly when the loan finances a device.' },
-      { key: 'applicationVelocity', label: 'Application velocity', type: 'count', unit: 'applications in 30 days', essential: false,
-        meaning: 'Repeated applications in a short period suggest shopping for an approval.' },
-      { key: 'profileChangeWindow', label: 'Profile change velocity', type: 'days', essential: false,
-        meaning: 'Refer where KYC details or contact information changed within this window before an application.' },
-      { key: 'inflowSpike', label: 'Pre-application inflow spike', type: 'ratio', unit: 'x the 90-day average', essential: false,
-        meaning: 'Compares wallet inflow in the last 30 days against the preceding 90-day average. A sudden spike can indicate a customer funding the wallet artificially to appear more creditworthy.' },
-      { key: 'dormantThenActive', label: 'Dormant then suddenly active', type: 'select', essential: false,
-        options: ['Refer', 'Decline', 'Off'],
-        meaning: 'Flags an account that was inactive and then became busy shortly before applying.' },
-    ],
-  },
-  {
-    key: 'l3', num: 'L3', title: 'Score decisioning and thin-file handling', canStop: true,
-    question: 'What band does the customer fall into, and what is the indicative offer?',
-    intro: 'Converts risk into an offer. Works differently depending on whether L0 routed the customer as scored or thin file.',
-    settings: [
-      { key: 'masterCutoff', label: 'Master approval cutoff', type: 'count', unit: 'score', essential: true,
-        meaning: 'A single score threshold below which no customer is approved, whatever the band table says. The main lever for tightening or loosening overall. Evaluation order decides: whichever of this and the band decision is reached first, decides.' },
-      { key: 'referBands', label: 'Refer band boundaries', type: 'text', essential: true,
-        meaning: 'Which bands route to manual review rather than being decided automatically.' },
-      { key: 'reviewCapacity', label: 'Manual review capacity', type: 'count', unit: 'applications per day', essential: true,
-        meaning: 'The most referred applications the team can handle per day. Determines how widely the referral rules can be set.' },
-      { key: 'overrideAuthority', label: 'Override authority', type: 'text', essential: true,
-        meaning: 'Who may override an engine decision, and up to what limit. Every override records the user, the reason and the original decision.' },
-    ],
     thinFile: [
       { key: 'starterLimit', label: 'Starter limit', type: 'currency', essential: true,
         meaning: 'The most offered to a customer with no repayment history.' },
-      { key: 'starterTenure', label: 'Maximum tenure', type: 'months', essential: false,
-        meaning: 'The longest repayment period on a first loan. Shorter tenures mean the outcome is known sooner.' },
+      { key: 'starterTenure', label: 'Maximum loan term', type: 'months', essential: false,
+        meaning: 'The longest repayment period on a first loan. A shorter term means the outcome is known sooner.' },
       { key: 'starterDeposit', label: 'Deposit requirement', type: 'percent', essential: true,
         meaning: 'The share of device value paid upfront. A deposit reduces exposure and selects for committed customers.' },
       { key: 'eligibleTier', label: 'Eligible device tier', type: 'select', essential: false,
@@ -222,9 +151,78 @@ const LAYERS = [
       { key: 'coolingPeriod', label: 'Cooling period after decline', type: 'days', essential: false,
         meaning: 'How long a declined customer must wait before applying again.' },
     ],
+    settings: [
+      { key: 'featureCompleteness', label: 'Minimum feature completeness', type: 'percent', essential: false,
+        meaning: 'The share of the features the model needs that are actually available for this customer. If the model uses 40 features and 28 are present, completeness is 70 percent.' },
+      { key: 'minWalletTenure', label: 'Minimum account age to be scored', type: 'days', essential: false, overlap: 'tenure',
+        meaning: 'How long the customer has had the wallet. Behaviour observed over a short period is not reliable evidence, so this is the floor for trusting a score at all.' },
+      { key: 'minTxnHistory', label: 'Minimum transaction history', type: 'count', unit: 'active days in 90', essential: false,
+        meaning: 'Distinct days in the last 90 on which the customer transacted. Measures genuine activity rather than a dormant account with one transaction.' },
+      { key: 'minLoanHistoryRepeat', label: 'Minimum loan history for repeat path', type: 'count', unit: 'closed loans', essential: false,
+        meaning: 'How many previous loans must be closed before a customer is treated as a repeat borrower rather than a new one.' },
+      { key: 'scoreStaleness', label: 'Score staleness limit', type: 'days', essential: false,
+        meaning: 'How old a cached score may be before it is out of date. Scores recalculate daily, so this mainly catches a pipeline failure going unnoticed.' },
+      { key: 'modelConfidenceFloor', label: 'Model confidence floor', type: 'percent', essential: true,
+        meaning: 'The model returns a confidence level alongside the score. Below this level the score is not trusted and the customer is routed to thin-file handling.' },
+    ],
   },
   {
-    key: 'l4', num: 'L4', title: 'Affordability', canStop: true,
+    key: 'l1', num: 'L1', ref: '§3', title: 'Hard knockouts', canStop: true,
+    question: 'Is the customer eligible at all?',
+    intro: 'Absolute eligibility rules. They are not risk judgements and the score does not affect them. They run first because they are quick and they remove the customer entirely.',
+    settings: [
+      { key: 'priorDefaultLookback', label: 'Prior default lookback', type: 'months', essential: true,
+        meaning: 'Exclude a customer who has previously defaulted with Ecocash within this period. A lookback lets customers become eligible again over time; permanent exclusion is safer but permanently shrinks the base.' },
+      { key: 'concurrentLoanCap', label: 'Concurrent loan cap', type: 'count', unit: 'active loans', essential: true,
+        meaning: 'How many loans a customer may hold at once. Taking several loans simultaneously is one of the fastest routes to over-indebtedness.' },
+      { key: 'delinquentDpd', label: 'Currently delinquent threshold', type: 'days', essential: false,
+        meaning: 'Days past due on any active loan above which a new loan is refused.' },
+      { key: 'minAccountTenure', label: 'Minimum account age to be eligible', type: 'days', essential: false, overlap: 'tenure',
+        meaning: 'How long the customer has had the wallet, as an eligibility floor. Distinct from the L0 threshold, which asks whether there is enough history to trust a score.' },
+      { key: 'dormancyLimit', label: 'Dormancy limit', type: 'days', essential: false,
+        meaning: 'Maximum days since the last transaction of any kind. A customer inactive for longer is not currently engaged with the wallet.' },
+      { key: 'staffHandling', label: 'Staff and related parties', type: 'select', essential: false,
+        options: ['Refer to manual review', 'Exclude', 'No special handling'],
+        meaning: 'How employees and connected parties are treated. Usually routed to review rather than declined, for governance reasons.' },
+    ],
+  },
+  {
+    key: 'l2', num: 'L2', ref: '§4', title: 'Fraud and first-payment-default screens', canStop: true,
+    question: 'Does the application carry identity risk?',
+    intro: 'A customer who never makes a single payment usually has not suffered a change in circumstances. The warning signs differ from credit warning signs, and so do the remedies. Most of these should refer rather than decline, because fraud rules always catch some genuine customers.',
+    settings: [
+      { key: 'simSwapWindow', label: 'Recent SIM swap window', type: 'days', essential: false,
+        meaning: 'Refer where the SIM has been swapped within this window. A recent swap can indicate an account takeover. SIM data may not be available; the control is kept for completeness.' },
+      { key: 'deviceChangeFreq', label: 'Device change frequency', type: 'count', unit: 'changes in 6 months', essential: false,
+        meaning: 'How many times the device on the account has changed. Frequent changes can indicate device resale, which matters directly when the loan finances a device.' },
+      { key: 'applicationVelocity', label: 'Application velocity', type: 'count', unit: 'applications in 30 days', essential: false,
+        meaning: 'Repeated applications in a short period suggest shopping for an approval.' },
+      { key: 'profileChangeWindow', label: 'Profile change velocity', type: 'days', essential: false,
+        meaning: 'Refer where KYC details or contact information changed within this window before an application.' },
+      { key: 'inflowSpike', label: 'Pre-application inflow spike', type: 'ratio', unit: 'x the 90-day average', essential: false,
+        meaning: 'Compares wallet inflow in the last 30 days against the preceding 90-day average. A sudden spike can indicate a customer funding the wallet artificially to appear more creditworthy.' },
+      { key: 'dormantThenActive', label: 'Dormant then suddenly active', type: 'select', essential: false,
+        options: ['Refer', 'Decline', 'Off'],
+        meaning: 'Flags an account that was inactive and then became busy shortly before applying.' },
+    ],
+  },
+  {
+    key: 'l3', num: 'L3', ref: '§5.2 and §5.3', title: 'Score decisioning and thin-file handling', canStop: true,
+    question: 'What band does the customer fall into, and what is the indicative offer?',
+    intro: 'Converts risk into an offer. Works differently depending on whether L0 routed the customer as scored or thin file.',
+    settings: [
+      { key: 'masterCutoff', label: 'Master approval cutoff', type: 'count', unit: 'score', essential: true,
+        meaning: 'A single score threshold below which no customer is approved, whatever the band table says. The main lever for tightening or loosening overall. Evaluation order decides: whichever of this and the band decision is reached first, decides.' },
+      { key: 'referBands', label: 'Refer band boundaries', type: 'text', essential: true,
+        meaning: 'Which bands route to manual review rather than being decided automatically.' },
+      { key: 'reviewCapacity', label: 'Manual review capacity', type: 'count', unit: 'applications per day', essential: true,
+        meaning: 'The most referred applications the team can handle per day. Determines how widely the referral rules can be set.' },
+      { key: 'overrideAuthority', label: 'Override authority', type: 'text', essential: true,
+        meaning: 'Who may override an engine decision, and up to what limit. Every override records the user, the reason and the original decision.' },
+    ],
+  },
+  {
+    key: 'l4', num: 'L4', ref: '§6', title: 'Affordability', canStop: true,
     question: 'Is this specific instalment sustainable against the customer’s income?',
     intro: 'The score asks whether a customer is likely to repay. Affordability asks whether this instalment is sustainable. A customer can be low risk and still be offered more than they can comfortably service.',
     settings: [
@@ -248,7 +246,7 @@ const LAYERS = [
     ],
   },
   {
-    key: 'l5', num: 'L5', title: 'Exposure and limit assignment', canStop: true,
+    key: 'l5', num: 'L5', ref: '§7', title: 'Exposure and limit assignment', canStop: true,
     question: 'What is the final limit, taken as the lowest of every applicable cap?',
     intro: 'Limits are the most effective loss control available. Loss is the amount lent multiplied by the rate of default; a cutoff moves only the second term, limits move the first directly. This is why a weaker customer can be approved with a small limit rather than declined.',
     settings: [
@@ -263,12 +261,12 @@ const LAYERS = [
         meaning: 'Limits are rounded down to a sensible increment so customers are offered clean amounts.' },
       { key: 'depositFloor', label: 'Deposit floor', type: 'percent', essential: false,
         meaning: 'A minimum deposit applied whatever the band.' },
-      { key: 'permittedTenures', label: 'Permitted tenures', type: 'text', essential: true,
+      { key: 'permittedTenures', label: 'Permitted loan terms', type: 'text', essential: true,
         meaning: 'The repayment periods customers may choose from.' },
     ],
   },
   {
-    key: 'l6', num: 'L6', title: 'Portfolio controls', canStop: true,
+    key: 'l6', num: 'L6', ref: '§8', title: 'Portfolio controls', canStop: true,
     question: 'Does this approval remain acceptable for the loan book as a whole?',
     intro: 'Every rule so far judges an individual customer. These protect the book. They are usually absent from a first version, and their absence is usually what causes difficulty months later, when the book has quietly become concentrated in the riskiest segment.',
     settings: [
@@ -300,8 +298,8 @@ const LAYER_KEYS = LAYERS.map(l => l.key);
 // draft sets these independently, so the console flags the overlap rather than
 // silently resolving it.
 const OVERLAP_GROUPS = [
-  { tag: 'tenure', label: 'Account age is gated in three places',
-    note: 'L0 sets a data-sufficiency floor, L1 an eligibility floor and L2 a fraud control. They are legitimately different questions, but they are set independently and the strictest one always wins. Check they are intentional.' },
+  { tag: 'tenure', label: 'Account age is gated twice, on purpose',
+    note: 'L0 asks whether there is enough history to trust a score. L1 asks whether the customer is eligible at all. Different questions, but set independently, and the stricter one always wins. Check both are intentional.' },
 ];
 
 
@@ -330,12 +328,10 @@ const RULES = [
   ['l1', 'account', 'in', 'Active, Active-dormant <30d', 'pass', true, 'E-04', 'RC-103'],
   ['l1', 'blocklist', 'eq', 'No match', 'pass', true, 'E-05', 'RC-501'],
   ['l0', 'txnMonths', 'gte', '3 months', 'pass', true, 'D-01', 'RC-301'],
-  ['l0', 'tenure', 'gte', '6 months', 'pass', true, 'D-05', 'RC-104'],
   ['l0', 'inflow', 'gte', '$40 per month', 'pass', true, 'D-02', 'RC-303'],
   ['l0', 'consistency', 'lte', '0.55 index', 'capThin', true, 'D-03', 'RC-302'],
   ['l0', 'volatility', 'gte', '0.80 coefficient', 'refer', false, 'D-04', 'RC-302'],
   ['l3', 'score', 'gte', '500 points', 'pass', true, 'L-01', 'RC-114'],
-  ['l3', 'income', 'gte', '$120 per month', 'pass', true, 'L-02', 'RC-208'],
   ['l1', 'exposure', 'gte', '$1 in open device loans', 'decline', true, 'E-06', 'RC-401'],
   ['l4', 'afford', 'gte', '25% of inferred monthly income', 'capAfford', true, 'A-01', 'RC-207'],
   ['l4', 'income', 'gte', '3× monthly instalment', 'pass', true, 'A-02', 'RC-207'],
@@ -457,7 +453,6 @@ const AA_RULES = [
   ['l1', 'account', 'in', 'Active', 'pass', true, 'E-03', 'RC-103'],
   ['l1', 'blocklist', 'eq', 'No match', 'pass', true, 'E-04', 'RC-501'],
   ['l0', 'txnMonths', 'gte', '1 month', 'pass', true, 'D-01', 'RC-301'],
-  ['l0', 'tenure', 'gte', '3 months', 'pass', true, 'D-03', 'RC-104'],
   ['l0', 'inflow', 'gte', '$5 per month', 'pass', true, 'D-02', 'RC-303'],
   ['l3', 'score', 'gte', '380 points', 'pass', true, 'L-01', 'RC-114'],
   ['l1', 'exposure', 'gte', '$1 in open advances', 'decline', true, 'E-05', 'RC-401'],
@@ -501,12 +496,10 @@ const EMPTY_BANDS = [
 // publication on.
 const LAYER_SEEDS = {
   df: {
-    l0: { featureCompleteness: '70', minWalletTenure: '180', minTxnHistory: '15', minLoanHistoryRepeat: '1', scoreStaleness: '7', modelConfidenceFloor: '' },
+    l0: { featureCompleteness: '70', minWalletTenure: '180', minTxnHistory: '15', minLoanHistoryRepeat: '1', scoreStaleness: '7', modelConfidenceFloor: '', starterLimit: '50', starterTenure: '3', starterDeposit: '30', eligibleTier: 'Entry tier only', loansToGraduate: '1', increasePerCycle: '50', ladderCeiling: '250', resetDpd: '30', coolingPeriod: '30' },
     l1: { priorDefaultLookback: '24', concurrentLoanCap: '1', delinquentDpd: '0', minAccountTenure: '90', dormancyLimit: '30', staffHandling: 'Refer to manual review' },
-    l2: { minAccountAgeFraud: '90', simSwapWindow: '30', deviceChangeFreq: '2', applicationVelocity: '2', profileChangeWindow: '14', inflowSpike: '3', dormantThenActive: 'Refer' },
-    l3: { masterCutoff: '', referBands: 'Thin-file', reviewCapacity: '', overrideAuthority: '',
-          starterLimit: '50', starterTenure: '3', starterDeposit: '30', eligibleTier: 'Entry tier only',
-          loansToGraduate: '1', increasePerCycle: '50', ladderCeiling: '250', resetDpd: '30', coolingPeriod: '30' },
+    l2: { simSwapWindow: '30', deviceChangeFreq: '2', applicationVelocity: '2', profileChangeWindow: '14', inflowSpike: '3', dormantThenActive: 'Refer' },
+    l3: { masterCutoff: '', referBands: 'Thin-file', reviewCapacity: '', overrideAuthority: '' },
     l4: { instalmentToIncome: '25', disposableFloor: '50', deductObligations: true, incomeStability: '0.5',
           minIncome: '100', incomeConfidence: '70', incomeHaircut: '25',
           incomeMethod: 'Recurring credits, excluding self-transfers and pass-through' },
@@ -516,12 +509,10 @@ const LAYER_SEEDS = {
           killSwitch: false, randomHoldout: '2', seasonalityWindows: 'January, May, September', macroTightening: 'Off' },
   },
   aa: {
-    l0: { featureCompleteness: '70', minWalletTenure: '90', minTxnHistory: '8', minLoanHistoryRepeat: '1', scoreStaleness: '7', modelConfidenceFloor: '' },
+    l0: { featureCompleteness: '70', minWalletTenure: '90', minTxnHistory: '8', minLoanHistoryRepeat: '1', scoreStaleness: '7', modelConfidenceFloor: '', starterLimit: '2', starterTenure: '1', starterDeposit: '0', eligibleTier: 'All tiers', loansToGraduate: '3', increasePerCycle: '50', ladderCeiling: '15', resetDpd: '14', coolingPeriod: '14' },
     l1: { priorDefaultLookback: '24', concurrentLoanCap: '1', delinquentDpd: '0', minAccountTenure: '90', dormancyLimit: '30', staffHandling: 'Refer to manual review' },
-    l2: { minAccountAgeFraud: '90', simSwapWindow: '30', deviceChangeFreq: '2', applicationVelocity: '2', profileChangeWindow: '14', inflowSpike: '3', dormantThenActive: 'Refer' },
-    l3: { masterCutoff: '', referBands: 'Starter', reviewCapacity: '', overrideAuthority: '',
-          starterLimit: '2', starterTenure: '1', starterDeposit: '0', eligibleTier: 'All tiers',
-          loansToGraduate: '3', increasePerCycle: '50', ladderCeiling: '15', resetDpd: '14', coolingPeriod: '14' },
+    l2: { simSwapWindow: '30', deviceChangeFreq: '2', applicationVelocity: '2', profileChangeWindow: '14', inflowSpike: '3', dormantThenActive: 'Refer' },
+    l3: { masterCutoff: '', referBands: 'Starter', reviewCapacity: '', overrideAuthority: '' },
     l4: { instalmentToIncome: '15', disposableFloor: '10', deductObligations: true, incomeStability: '0.6',
           minIncome: '40', incomeConfidence: '70', incomeHaircut: '25', incomeMethod: '30-day median inflow' },
     l5: { productMaximum: '15', minViableLimit: '1', customerExposureCap: '750',
@@ -578,10 +569,10 @@ const MODEL_HEALTH = {
 // so reasons always track the rules rather than a hand-authored mapping.
 const SAMPLE_DECISIONS = [
   {
-    id: 'sd1', name: 'Applicant A', summary: '24 · wallet 4 months · score not computed',
+    id: 'sd1', name: 'Applicant A', summary: '24 · wallet 4 months · 2 months of history · score not computed',
     outcome: 'Routed to cold-start', outcomeKind: 'route',
-    firedRule: 'D-05',
-    detail: 'Cleared the non-negotiable eligibility gates, then failed the coverage check: wallet tenure is 4 months against a 6-month threshold. That is a routing decision, not a decline. The scored-path sections are skipped and the customer is evaluated on the cold-start branch instead.',
+    firedRule: 'D-01',
+    detail: 'Cleared the non-negotiable eligibility gates, then failed the L0 data check: 2 months of transaction history against a 3-month threshold. That is a routing decision, not a decline. The scored path is skipped and the customer is handled on the thin-file path instead.',
   },
   {
     id: 'sd2', name: 'Applicant B', summary: '31 · wallet 14 months · score 305 · 3 months history',
@@ -667,7 +658,8 @@ const COLDSTART_BLANK = {
   defer: { retryDays: '30' },
 };
 
-const DEFAULT_OPEN = { l0: true, l1: true, l2: false, l3: true, l4: false, l5: false, l6: false };
+// Only the routing layer opens on arrival; the rest are one click away.
+const DEFAULT_OPEN = { l0: true, l1: false, l2: false, l3: false, l4: false, l5: false, l6: false };
 
 const DF_VERSIONS = [
   { version: 'v1.5', status: 'Draft', summary: '7 rules changed, Standard floor 500 → 520, coverage tightened.', meta: 'Edited by T. Moyo · 4 Aug 2026', action: 'Compare' },
