@@ -104,9 +104,16 @@ firebase deploy --only hosting:credit-console
 
 ```
 index.html        the chooser landing page
+assets/           the Sasai logo, shared by both builds
 v1/               the six-tab build, frozen at commit 63ce862
 v2/               the L0 to L6 waterfall build, where development continues
 ```
+
+`assets/` holds the official Sasai logo as SVG: `sasai-logo.svg` for light
+backgrounds, `sasai-logo-reversed.svg` for the navy sidebar and header,
+`sasai-mark.svg` for the mark on its own, and `sasai-favicon.svg` for the
+browser tab. The artwork's own colours are navy `#224989` and teal `#6BC0CF`,
+which sit a shade off the interface palette below and are left as drawn.
 
 Each build is four files:
 

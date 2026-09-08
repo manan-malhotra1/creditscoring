@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sasai Credit: Rule Engine Console</title>
+<link rel="icon" type="image/svg+xml" href="assets/sasai-favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -19,14 +20,12 @@
     background: linear-gradient(180deg, #172E7B 0%, #144989 100%);
     color: #fff; padding: 30px 32px;
   }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .mark {
-    width: 34px; height: 34px; border-radius: 9px; background: #48C2CF;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 16px; color: #10265E;
+  .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .brand-logo { display: block; width: 126px; height: auto; }
+  .brand-sub {
+    font-size: 12.5px; color: #9FC6E8; letter-spacing: 0.2px;
+    padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.28);
   }
-  .brand-name { font-size: 16px; font-weight: 700; }
-  .brand-sub { font-size: 12.5px; color: #9FC6E8; margin-top: 2px; }
   h1 { margin: 22px 0 0 0; font-size: 25px; font-weight: 700; }
   .lede { margin: 8px 0 0 0; font-size: 14px; color: #CFE0F0; max-width: 760px; line-height: 1.6; text-wrap: pretty; }
   main { flex: 1; padding: 28px 32px 56px 32px; max-width: 1180px; width: 100%; box-sizing: border-box; }
@@ -73,11 +72,8 @@
 
 <header>
   <div class="brand">
-    <div class="mark">S</div>
-    <div>
-      <div class="brand-name">Sasai Credit</div>
-      <div class="brand-sub">Rule Engine Console</div>
-    </div>
+    <img class="brand-logo" src="assets/sasai-logo-reversed.svg" alt="Sasai" width="126" height="26" />
+    <span class="brand-sub">Credit Rule Engine Console</span>
   </div>
   <h1>Two builds, side by side</h1>
   <p class="lede">The same console organised two different ways. v1 groups configuration into six product tabs. v2 follows the L0 to L6 decision waterfall from the Technodysis rule engine draft. Open either, and switch between them from the badge in the corner.</p>
