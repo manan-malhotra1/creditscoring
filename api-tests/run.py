@@ -13,8 +13,11 @@ import json, os, sys, time, urllib.error, urllib.request
 BASE = os.environ.get('CREDIT_API_BASE',
                       'https://staging.sasaipaymentgateway.com/staging/creditscoring')
 PRODUCT = os.environ.get('CREDIT_PRODUCT', 'device_financing')
-# A tenant of our own, so nothing here touches data a colleague is working on.
-TENANT = os.environ.get('CREDIT_TENANT', 'sasai-mm-test')
+TENANT = os.environ.get('CREDIT_TENANT', 'legacy')
+# Creating a rule set or patching a rule changes the ACTIVE configuration for
+# the whole tenant, and `legacy` is shared. Reads and assessments always run;
+# the two steps that change shared config need CREDIT_ALLOW_WRITES=1.
+WRITES = os.environ.get('CREDIT_ALLOW_WRITES') == '1'
 CUSTOMER = int(os.environ.get('CREDIT_CUSTOMER', '777868302'))
 
 G, R, Y, D, B = '\033[32m', '\033[31m', '\033[33m', '\033[2m', '\033[1m'
@@ -66,6 +69,26 @@ def call(method, path, body=None, expect=200, note=''):
         print(f"       {R}{json.dumps(payload)[:500] if isinstance(payload, (dict, list)) else payload}{X}")
     return status, payload
 
+def why(path_fragment, tenant=None):
+    """The service logs every request with its server-side error, so a 500
+    can be explained rather than just reported."""
+    t = tenant or TENANT
+    # The log row is written just after the response, so allow for the lag.
+    for attempt in range(3):
+        time.sleep(1.5)
+        st, rows = call('GET', f'/api-logs?tenantId={t}&endpoint={path_fragment}'
+                               f'&statusCode=500&limit=1', expect=200,
+                        note=f'reading the service log for the cause (try {attempt + 1})')
+        rows = rows if isinstance(rows, list) else (rows.get('items') if isinstance(rows, dict) else [])
+        if rows:
+            err = rows[0].get('errorMessage')
+            print(f"       {R}server-side cause:{X} "
+                  f"{str(err).strip().replace(chr(10), ' ')[:300] if err else 'none recorded'}")
+            return err
+    print(f"       {Y}no 500 recorded in the service log yet{X}")
+    return None
+
+
 def head(n, t):
     print(f"\n{B}{n}. {t}{X}")
 
@@ -78,7 +101,9 @@ def dump(obj, keys):
         print(f"       {k:28} {s[:96]}")
 
 print(f"{B}Ecocash Rule Engine, staging smoke test{X}")
-print(f"{D}base     {BASE}\ntenant   {TENANT}\nproduct  {PRODUCT}\ncustomer {CUSTOMER}\nkey      {KEY[:4]}…{KEY[-2:]} ({len(KEY)} chars){X}")
+print(f"{D}base     {BASE}\ntenant   {TENANT}\nproduct  {PRODUCT}\ncustomer {CUSTOMER}\n"
+      f"key      {KEY[:4]}…{KEY[-2:]} ({len(KEY)} chars)\n"
+      f"writes   {'enabled' if WRITES else 'skipped (set CREDIT_ALLOW_WRITES=1)'}{X}")
 
 head(1, "Service is up")
 call('GET', '/health', expect=200, note='no key needed')
@@ -100,20 +125,42 @@ if st == 200 and isinstance(frame, dict):
           f"layers={len(frame.get('layers', []))}  "
           f"rules={sum(len(l.get('rules', [])) for l in frame.get('layers', []))}{X}")
 
-head(4, "Create a rule set (profile travels with it on this build)")
-st, rv = call('POST', '/rule-versions', {
+head(4, "Does productProfile survive a round trip?")
+# The spec documents productProfile on CreateRuleVersionDto and the service
+# accepts it, but check that it is actually stored: if it is dropped, nothing
+# can populate decision.product_profile_id and every assessment fails.
+DIAG = f'mm-probe-{int(time.time())}'
+st, probe = call('POST', '/rule-versions', {
+    'tenantId': DIAG, 'productCode': PRODUCT, 'label': 'productProfile probe',
+    'productProfile': {'productMaximum': 500, 'minimumViableLimit': 30,
+                       'totalCustomerExposureCap': 750, 'limitRoundingIncrement': 10,
+                       'permittedTenures': [3, 4, 6], 'depositFloorPct': 0},
+}, expect=(200, 201), note='on a throwaway tenant, not ' + TENANT)
+kept = isinstance(probe, dict) and probe.get('productProfile') is not None
+results.append((kept, 'productProfile is persisted, not dropped',
+                'null' if not kept else 'stored', 'the object sent', ''))
+print(f"       {(G + 'ok' + X) if kept else (R + 'FAIL' + X)} "
+      f"productProfile came back as {json.dumps(probe.get('productProfile')) if isinstance(probe, dict) else '?'}")
+
+head(5, "Create a rule set (profile travels with it on this build)")
+rule_version_id = None
+if not WRITES:
+    print(f"       {Y}skipped{X} {D}would supersede the ACTIVE rule set for tenant "
+          f"'{TENANT}', which others are testing against{X}")
+else:
+  st, rv = call('POST', '/rule-versions', {
     'tenantId': TENANT,
     'productCode': PRODUCT,
     'label': 'Smoke test: defaults, max 600',
     'productProfile': {'productMaximum': 600},
-}, expect=(200, 201), note='guide step 2')
-rule_version_id = rv.get('id') if isinstance(rv, dict) else None
-if isinstance(rv, dict):
+  }, expect=(200, 201), note='guide step 2')
+  rule_version_id = rv.get('id') if isinstance(rv, dict) else None
+  if isinstance(rv, dict):
     dump(rv, ['id', 'status', 'label'])
     if 'productProfile' in rv:
         dump(rv, ['productProfile'])
 
-head(5, "Assess a customer")
+head(6, "Assess a customer")
 st, dec = call('POST', '/decisions', {
     'tenantId': TENANT, 'productCode': PRODUCT, 'customerId': CUSTOMER,
     'requestedAmount': 300, 'requestedTenure': 4, 'channel': 'app',
@@ -122,6 +169,8 @@ if st not in (200, 201):
     st, dec = call('POST', '/decisions', {
         'tenantId': TENANT, 'productCode': PRODUCT, 'customerId': CUSTOMER},
         expect=(200, 201), note='retry, minimal body')
+if st >= 500:
+    why('/decisions')
 decision_id = dec.get('decisionId') if isinstance(dec, dict) else None
 if isinstance(dec, dict) and decision_id:
     dump(dec, ['decision', 'routing', 'scoreSource', 'score', 'band',
@@ -136,10 +185,10 @@ if isinstance(dec, dict) and decision_id:
     print(f"       {D}versions: {json.dumps(dec.get('versions'))[:150]}{X}")
 
 if decision_id:
-    head(6, "Re-read the stored decision")
+    head(7, "Re-read the stored decision")
     call('GET', f'/decisions/{decision_id}?tenantId={TENANT}', expect=200, note='guide 8.1')
 
-    head(7, "Trace it, layer by layer")
+    head(8, "Trace it, layer by layer")
     st, tr = call('GET', f'/decisions/{decision_id}/trace?tenantId={TENANT}',
                   expect=200, note='guide 8.2')
     entries = tr if isinstance(tr, list) else (tr.get('layers') or tr.get('trace') or []) if isinstance(tr, dict) else []
@@ -154,12 +203,15 @@ if decision_id:
         for r in failed[:3]:
             print(f"         {R}x{X} {json.dumps(r)[:110]}")
 
-    head(8, "Tenant isolation: another tenant must not see this decision")
+    head(9, "Tenant isolation: another tenant must not see this decision")
     call('GET', f'/decisions/{decision_id}?tenantId=someone-elses-tenant',
          expect=404, note='guide section 2')
 
-head(9, "Change a rule, then assess again")
+head(10, "Change a rule, then assess again")
 rid = None
+if not WRITES:
+    print(f"       {Y}skipped{X} {D}would change the live rules for tenant '{TENANT}'{X}")
+    frame = {}
 if isinstance(frame, dict):
     for layer in frame.get('layers', []):
         for r in layer.get('rules', []):
