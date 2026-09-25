@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Smoke test for the Ecocash Rule Engine staging API.
+
+Runs the quick start from the developer guide end to end and checks each
+response against what the guide says should happen. Standard library only.
+
+The API key is read from api-tests/.env or the CREDIT_API_KEY environment
+variable, never passed on the command line, so it stays out of shell history
+and out of this repository.
+"""
+import json, os, sys, time, urllib.error, urllib.request
+
+BASE = os.environ.get('CREDIT_API_BASE',
+                      'https://staging.sasaipaymentgateway.com/staging/creditscoring')
+PRODUCT = os.environ.get('CREDIT_PRODUCT', 'device_financing')
+# A tenant of our own, so nothing here touches data a colleague is working on.
+TENANT = os.environ.get('CREDIT_TENANT', 'sasai-mm-test')
+CUSTOMER = int(os.environ.get('CREDIT_CUSTOMER', '777868302'))
+
+G, R, Y, D, B = '\033[32m', '\033[31m', '\033[33m', '\033[2m', '\033[1m'
+X = '\033[0m'
+
+def load_key():
+    key = os.environ.get('CREDIT_API_KEY')
+    if key:
+        return key.strip()
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    if os.path.exists(path):
+        for line in open(path):
+            line = line.strip()
+            if line.startswith('CREDIT_API_KEY='):
+                return line.split('=', 1)[1].strip().strip('"\'')
+    sys.exit(f"{R}No API key.{X} Put it in api-tests/.env as\n"
+             f"  CREDIT_API_KEY=your-key-here\n"
+             f"or export CREDIT_API_KEY before running.")
+
+KEY = load_key()
+results = []
+
+def call(method, path, body=None, expect=200, note=''):
+    url = BASE + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        'X-API-Key': KEY, 'Content-Type': 'application/json', 'Accept': 'application/json'})
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            status, raw = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, e.read()
+    except Exception as e:
+        status, raw = 0, str(e).encode()
+    ms = int((time.time() - t0) * 1000)
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        payload = raw.decode('utf-8', 'replace')[:400]
+    want = expect if isinstance(expect, tuple) else (expect,)
+    ok = status in want
+    results.append((ok, f"{method} {path.split('?')[0]}", status,
+                    '/'.join(map(str, want)), note))
+    mark = f"{G}ok{X}" if ok else f"{R}FAIL{X}"
+    print(f"  [{mark}] {method:6} {path.split('?')[0]:42} {status} "
+          f"(want {'/'.join(map(str, want))}) {ms:>5}ms  {D}{note}{X}")
+    if not ok:
+        print(f"       {R}{json.dumps(payload)[:500] if isinstance(payload, (dict, list)) else payload}{X}")
+    return status, payload
+
+def head(n, t):
+    print(f"\n{B}{n}. {t}{X}")
+
+def dump(obj, keys):
+    for k in keys:
+        v = obj.get(k)
+        if isinstance(v, (dict, list)):
+            v = json.dumps(v)
+        s = str(v)
+        print(f"       {k:28} {s[:96]}")
+
+print(f"{B}Ecocash Rule Engine, staging smoke test{X}")
+print(f"{D}base     {BASE}\ntenant   {TENANT}\nproduct  {PRODUCT}\ncustomer {CUSTOMER}\nkey      {KEY[:4]}…{KEY[-2:]} ({len(KEY)} chars){X}")
+
+head(1, "Service is up")
+call('GET', '/health', expect=200, note='no key needed')
+
+head(2, "Endpoints the guide documents but staging does not serve")
+# The guide makes POST /product-profiles step 1 of the quick start. It is not
+# routed on this deployment, so this check is expected to fail today and will
+# start passing on its own once the module is deployed.
+call('POST', '/product-profiles', {'tenantId': TENANT, 'productCode': PRODUCT},
+     expect=(200, 201), note='guide step 1, section 4.1 (known gap)')
+
+head(3, "Read the rule frame: what are the defaults?")
+st, frame = call('GET', f'/rule-versions/frame?tenantId={TENANT}&productCode={PRODUCT}',
+                 expect=200, note='401 here means the key is wrong')
+if st == 401:
+    sys.exit(f"\n{R}The key was rejected. Nothing further can run.{X}")
+if st == 200 and isinstance(frame, dict):
+    print(f"       {D}sourceStatus={frame.get('sourceStatus')}  "
+          f"layers={len(frame.get('layers', []))}  "
+          f"rules={sum(len(l.get('rules', [])) for l in frame.get('layers', []))}{X}")
+
+head(4, "Create a rule set (profile travels with it on this build)")
+st, rv = call('POST', '/rule-versions', {
+    'tenantId': TENANT,
+    'productCode': PRODUCT,
+    'label': 'Smoke test: defaults, max 600',
+    'productProfile': {'productMaximum': 600},
+}, expect=(200, 201), note='guide step 2')
+rule_version_id = rv.get('id') if isinstance(rv, dict) else None
+if isinstance(rv, dict):
+    dump(rv, ['id', 'status', 'label'])
+    if 'productProfile' in rv:
+        dump(rv, ['productProfile'])
+
+head(5, "Assess a customer")
+st, dec = call('POST', '/decisions', {
+    'tenantId': TENANT, 'productCode': PRODUCT, 'customerId': CUSTOMER,
+    'requestedAmount': 300, 'requestedTenure': 4, 'channel': 'app',
+}, expect=(200, 201), note='guide step 3')
+if st not in (200, 201):
+    st, dec = call('POST', '/decisions', {
+        'tenantId': TENANT, 'productCode': PRODUCT, 'customerId': CUSTOMER},
+        expect=(200, 201), note='retry, minimal body')
+decision_id = dec.get('decisionId') if isinstance(dec, dict) else None
+if isinstance(dec, dict) and decision_id:
+    dump(dec, ['decision', 'routing', 'scoreSource', 'score', 'band',
+               'approvedLimit', 'tenure', 'deposit', 'instalment',
+               'affordabilityLimit', 'incomeBasis', 'bindingConstraint'])
+    print(f"       {D}capsApplied:{X}")
+    for c in (dec.get('capsApplied') or [])[:8]:
+        print(f"         {json.dumps(c)[:100]}")
+    print(f"       {D}reasonCodes:{X}")
+    for c in (dec.get('reasonCodes') or [])[:8]:
+        print(f"         {json.dumps(c)[:100]}")
+    print(f"       {D}versions: {json.dumps(dec.get('versions'))[:150]}{X}")
+
+if decision_id:
+    head(6, "Re-read the stored decision")
+    call('GET', f'/decisions/{decision_id}?tenantId={TENANT}', expect=200, note='guide 8.1')
+
+    head(7, "Trace it, layer by layer")
+    st, tr = call('GET', f'/decisions/{decision_id}/trace?tenantId={TENANT}',
+                  expect=200, note='guide 8.2')
+    entries = tr if isinstance(tr, list) else (tr.get('layers') or tr.get('trace') or []) if isinstance(tr, dict) else []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        rules = e.get('rulesEvaluated') or []
+        failed = [r for r in rules if isinstance(r, dict)
+                  and (r.get('passed') is False or str(r.get('result', '')).upper() in ('FAIL', 'FAILED'))]
+        print(f"       {e.get('layer', '?'):10} seq={str(e.get('sequence', '?')):3} "
+              f"outcome={str(e.get('outcome'))[:44]:46} {len(rules)} rules, {len(failed)} failed")
+        for r in failed[:3]:
+            print(f"         {R}x{X} {json.dumps(r)[:110]}")
+
+    head(8, "Tenant isolation: another tenant must not see this decision")
+    call('GET', f'/decisions/{decision_id}?tenantId=someone-elses-tenant',
+         expect=404, note='guide section 2')
+
+head(9, "Change a rule, then assess again")
+rid = None
+if isinstance(frame, dict):
+    for layer in frame.get('layers', []):
+        for r in layer.get('rules', []):
+            if r.get('key') == 'minimum_age':
+                rid = r.get('id')
+if rid:
+    call('PATCH', '/rule-versions/rules', {
+        'tenantId': TENANT,
+        'updates': [{'ruleId': rid, 'value': {'operator': 'gte', 'threshold': 99}}],
+    }, expect=200, note='minimum_age -> 99, everybody should now fail it')
+    st, dec2 = call('POST', '/decisions', {
+        'tenantId': TENANT, 'productCode': PRODUCT, 'customerId': CUSTOMER},
+        expect=(200, 201), note='same customer, tightened rules')
+    if isinstance(dec2, dict):
+        dump(dec2, ['decision', 'routing', 'approvedLimit'])
+        before = dec.get('decision') if isinstance(dec, dict) else None
+        after = dec2.get('decision')
+        changed = before != after
+        results.append((changed, 'rule edit changes the outcome', after, 'different from ' + str(before), ''))
+        print(f"       {(G + 'ok' + X) if changed else (Y + 'note' + X)} "
+              f"decision {before} -> {after}")
+    call('PATCH', '/rule-versions/rules', {
+        'tenantId': TENANT,
+        'updates': [{'ruleId': rid, 'value': {'operator': 'gte', 'threshold': 18}}],
+    }, expect=200, note='put minimum_age back to 18')
+else:
+    print(f"       {Y}minimum_age not found in the frame, skipping{X}")
+
+print(f"\n{B}Summary{X}")
+passed = sum(1 for r in results if r[0])
+for ok, name, got, want, note in results:
+    print(f"  {(G + 'ok  ' + X) if ok else (R + 'FAIL' + X)} {name:48} {got} (want {want})")
+print(f"\n{passed}/{len(results)} checks passed")
+sys.exit(0 if passed == len(results) else 1)
