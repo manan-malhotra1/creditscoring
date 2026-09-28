@@ -812,7 +812,7 @@ const MODEL_HEALTH = {
     { pred: 9, obs: 9.4 }, { pred: 13, obs: 14.0 }, { pred: 18, obs: 19.5 },
     { pred: 25, obs: 27.0 }, { pred: 34, obs: 36.2 },
   ],
-  // % of scored population per 50-point bucket, 0–1000
+  // % of scored population per bucket across the 0 to 100 score range
   scoreDist: [0.6, 1.2, 2.1, 3.4, 4.8, 6.2, 7.6, 8.8, 9.6, 10.0, 9.7, 8.9, 7.7, 6.3, 4.9, 3.6, 2.4, 1.4, 0.6, 0.2],
   // Bad rate by DF score band (validation), rank ordering check
   badByBand: [

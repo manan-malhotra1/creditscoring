@@ -453,7 +453,7 @@ function renderHeader() {
           ${chip(p.status)}
           <span class="mode-pill${isEdit ? ' editing' : ''}">${isEdit ? 'Editing' : 'Viewing'}</span>
         </div>
-        <div class="profile-sub">${esc(p.market)} · Ecocash wallet · model DF-Score v3 (0–1000)</div>
+        <div class="profile-sub">${esc(p.market)} · Ecocash wallet · model DF-Score v3 (${state.scoreMin} to ${state.scoreMax})</div>
       </div>
       <div class="topbar-actions">${actions}</div>`;
   } else {
@@ -628,8 +628,9 @@ function renderBands() {
 
   const handles = bands.slice(1).map((b, idx) => {
     const i = idx + 1;
-    const lo = bands[i - 1].floor + 20;
-    const hi = (i + 1 < bands.length ? bands[i + 1].floor : s.scoreMax) - 20;
+    const gap = Math.max(1, Math.round((s.scoreMax - s.scoreMin) / 50));
+    const lo = bands[i - 1].floor + gap;
+    const hi = (i + 1 < bands.length ? bands[i + 1].floor : s.scoreMax) - gap;
     return `
     <div class="band-handle" data-handle="${i}" style="left:${((b.floor - s.scoreMin) / span) * 100}%;"
       role="slider" tabindex="0"
@@ -2352,7 +2353,7 @@ function renderFallback(part) {
 
   const pointsBlock = `
   <h3 class="panel-title" style="margin-top:6px;">Fallback points scorecard</h3>
-  <div class="panel-sub" style="margin-bottom:10px;">For a customer L0 routed as thin file. Points are awarded for whatever the customer can show, summed, and treated as a score on the same 0–1000 scale, then capped because a points total is a rougher guess than a model score.</div>
+  <div class="panel-sub" style="margin-bottom:10px;">For a customer L0 routed as thin file. Points are awarded for whatever the customer can show, summed, and treated as a score on the same 0 to 100 scale, then capped because a points total is a rougher guess than a model score.</div>
   ${entryRows}
   <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
     <button class="add-rule" data-action="fb-add">+ Add signal</button>
@@ -2396,7 +2397,7 @@ const VALUE_LABEL = {
   multiplier: 'Multiple of the baseline', operator: 'Comparison',
 };
 // Rendered by their own panel rather than as plain fields.
-const TABLE_FIELDS = ['rows', 'cells', 'cols', 'columns'];
+const TABLE_FIELDS = ['rows', 'cells', 'cols', 'columns', 'rowKey', 'outputs'];
 
 const OP_WORD = { gte: 'at least', lte: 'at most', gt: 'more than', lt: 'less than', eq: 'exactly' };
 
@@ -2503,10 +2504,30 @@ function fieldControl(layerKey, key, field, val, label) {
 
 // Every field of the rule's value, each labelled, plus the comparison word when
 // the rule carries one so the row reads as a sentence rather than a number.
+function tableSummary(layerKey, key) {
+  const v = settingValue(layerKey, key);
+  if (key === 'limit_matrix') {
+    return `${(v.rows || []).length} bands x ${(v.columns || []).length} affordability steps`;
+  }
+  if (key === 'refer_band_boundaries') {
+    const b = ((v.rows || [])[0] || {}).outputs || {};
+    return (b.bands || []).length ? `band ${(b.bands || []).join(', ')}` : 'no band refers';
+  }
+  if (Array.isArray(v.rows)) {
+    if (v.maxPoints != null) {
+      return v.rows.length ? `${v.rows.length} steps, up to ${v.maxPoints} points`
+                           : `no steps set yet, up to ${v.maxPoints} points`;
+    }
+    const names = v.rows.map(r => (r.outputs || {}).band).filter(Boolean);
+    return names.length ? `${names.length} bands, ${names[0]} to ${names[names.length - 1]}` : `${v.rows.length} rows`;
+  }
+  return 'set below';
+}
+
 function settingEditor(layerKey, d) {
   const v = settingValue(layerKey, d.key);
   const fields = editableFields(v);
-  if (!fields.length) return `<span class="readonly-value">set in the table below</span>`;
+  if (!fields.length) return `<span class="readonly-value">${esc(tableSummary(layerKey, d.key))}</span>`;
   const op = v.operator ? `<span class="val-unit">${esc(OP_WORD[v.operator] || v.operator)}</span>` : '';
   return `<span class="rule-fields">${op}${fields.map(f => `
     <span class="rule-field">
@@ -2521,7 +2542,7 @@ function settingEditor(layerKey, d) {
 // render identically. What a condition carries extra (operator, action, reason
 // code) hides behind a details disclosure, because it is rarely changed.
 function paramRow(opts) {
-  const { id, name, meaning, control, tags = '', on = null, onAction = '', details = '', open = false, warn = '' } = opts;
+  const { id, name, meaning, control, tags = '', on = null, onAction = '', details = '', open = false, warn = '', below = '' } = opts;
   return `
   <div class="prow${warn ? ' prow-warn' : ''}${on === false ? ' prow-off' : ''}">
     <div class="prow-main">
@@ -2539,8 +2560,110 @@ function paramRow(opts) {
           aria-expanded="${open ? 'true' : 'false'}" aria-label="More options for ${esc(name)}">${open ? 'Less' : 'More'}</button>` : ''}
     </div>
     ${warn ? `<div class="prow-warnline">${warn}</div>` : ''}
+    ${below || ''}
     ${details && open ? `<div class="prow-details">${details}</div>` : ''}
   </div>`;
+}
+
+// The tables a rule can carry: band ranges, the limit matrix, the scorecard
+// points steps, the refer-band picker. Each renders under its own row, so a
+// rule that says "5 bands, A to E" shows those five bands in place.
+const DECISIONS = ['approve', 'refer', 'decline'];
+
+function cellInput(layerKey, key, attrs, val, label, opts = {}) {
+  const w = opts.wide ? ' style="width:78px;"' : '';
+  return `<input type="${opts.text ? 'text' : 'number'}" step="any" class="val-input tbl-input"${w}
+    value="${val === null || val === undefined ? '' : esc(val)}" placeholder="${esc(opts.placeholder || 'not set')}"
+    data-change="${opts.change || 'rule-cell'}" data-list="${layerKey}" data-key="${esc(key)}" ${attrs}
+    aria-label="${esc(label)}" />`;
+}
+
+function bandRangeTable(layerKey, key, withOffer) {
+  const v = settingValue(layerKey, key);
+  const rows = (v.rows || []).map((r, i) => {
+    const o = r.outputs || {};
+    const cells = [
+      `<td class="tbl-band"><span class="band-dot" style="background:${BAND_COLORS[(v.rows.length - 1) - i] || '#98A2B3'};"></span>${esc(o.band || '?')}</td>`,
+      `<td>${cellInput(layerKey, key, `data-row="${i}" data-field="rangeMin"`, r.rangeMin, `Lowest score in band ${o.band}`, { change: 'rule-range' })}</td>`,
+      `<td>${cellInput(layerKey, key, `data-row="${i}" data-field="rangeMax"`, r.rangeMax, `Highest score in band ${o.band}`, { change: 'rule-range' })}</td>`,
+    ];
+    if (withOffer) {
+      cells.push(`<td><select class="lim-select tbl-select" data-change="rule-output" data-list="${layerKey}"
+          data-key="${esc(key)}" data-row="${i}" data-field="decision" aria-label="Decision for band ${esc(o.band)}">
+          ${DECISIONS.map(x => `<option${x === o.decision ? ' selected' : ''}>${x}</option>`).join('')}
+        </select></td>`);
+      cells.push(`<td>${cellInput(layerKey, key, `data-row="${i}" data-field="maxTenureMonths"`, o.maxTenureMonths, `Maximum tenure for band ${o.band}`, { change: 'rule-output' })}</td>`);
+      cells.push(`<td>${cellInput(layerKey, key, `data-row="${i}" data-field="depositPct"`, o.depositPct, `Deposit for band ${o.band}`, { change: 'rule-output' })}</td>`);
+    }
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('');
+  const head = withOffer
+    ? '<th>Band</th><th>From</th><th>To</th><th>Decision</th><th>Max tenure</th><th>Deposit %</th>'
+    : '<th>Band</th><th>From</th><th>To</th>';
+  return `<table class="rule-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function limitMatrixTable(layerKey, key) {
+  const v = settingValue(layerKey, key);
+  const cols = v.columns || [];
+  const head = `<th>Band</th>${cols.map(c => `<th>${esc(String(c.label || '').replace(/_/g, ' ').replace('pct', '%'))}</th>`).join('')}`;
+  const rows = (v.rows || []).map((band, i) => {
+    const cells = cols.map((c, j) => {
+      const val = ((v.cells || [])[i] || [])[j];
+      const isWord = typeof val === 'string';
+      return `<td>${cellInput(layerKey, key, `data-row="${i}" data-col="${j}"`, val,
+        `Multiplier for band ${band} at ${c.label}`, { text: isWord, wide: isWord })}</td>`;
+    }).join('');
+    return `<tr><td class="tbl-band">${esc(band)}</td>${cells}</tr>`;
+  }).join('');
+  return `<table class="rule-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
+    <div class="rule-table-note">Columns are the share of income the instalment would take. A cell may hold a multiplier or the word <code>refer</code>.</div>`;
+}
+
+function referBandPicker(layerKey, key) {
+  const v = settingValue(layerKey, key);
+  const chosen = (((v.rows || [])[0] || {}).outputs || {}).bands || [];
+  const all = (settingValue(layerKey, 'band_table').rows || []).map(r => (r.outputs || {}).band).filter(Boolean);
+  return `<div class="band-picker">${all.map(b => `
+    <button class="seg-btn${chosen.includes(b) ? ' active' : ''}" data-action="refer-band"
+      data-list="${layerKey}" data-key="${esc(key)}" data-val="${esc(b)}"
+      aria-pressed="${chosen.includes(b) ? 'true' : 'false'}"
+      aria-label="Band ${esc(b)} routes to manual review">${esc(b)}</button>`).join('')}</div>
+    <div class="rule-table-note">A band that refers is not decided automatically. Once L3 manual review capacity is reached, each referral falls back to a defined action for its source rather than queueing.</div>`;
+}
+
+function pointsTable(layerKey, key, def) {
+  const v = settingValue(layerKey, key);
+  const rows = (v.rows || []).map((r, i) => `
+    <tr>
+      <td>${cellInput(layerKey, key, `data-row="${i}" data-field="rangeMin"`, r.rangeMin, `Lowest value, step ${i + 1}`, { change: 'rule-range' })}</td>
+      <td>${cellInput(layerKey, key, `data-row="${i}" data-field="rangeMax"`, r.rangeMax, `Highest value, step ${i + 1}`, { change: 'rule-range' })}</td>
+      <td>${cellInput(layerKey, key, `data-row="${i}" data-field="points"`, (r.outputs || {}).points, `Points, step ${i + 1}`, { change: 'rule-output' })}</td>
+      <td><button class="rule-remove" data-action="points-remove" data-list="${layerKey}" data-key="${esc(key)}"
+        data-row="${i}" aria-label="Remove step ${i + 1} from ${esc(def.label)}">Remove</button></td>
+    </tr>`).join('');
+  return `
+    ${v.rows && v.rows.length
+      ? `<table class="rule-table"><thead><tr><th>From</th><th>To</th><th>Points</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<div class="rule-table-note">No steps set yet, so this attribute scores zero. Points are set judgementally at launch and refitted against observed repayment once there are enough cycles.</div>`}
+    <button class="add-rule" data-action="points-add" data-list="${layerKey}" data-key="${esc(key)}">+ Add a points step to ${esc(def.label)}</button>`;
+}
+
+// The table a rule carries, if it carries one.
+function ruleTable(layerKey, def) {
+  const v = settingValue(layerKey, def.key);
+  let body = '';
+  if (def.key === 'limit_matrix') body = limitMatrixTable(layerKey, def.key);
+  else if (def.key === 'refer_band_boundaries') body = referBandPicker(layerKey, def.key);
+  else if (v.maxPoints != null) body = pointsTable(layerKey, def.key, def);
+  else if (Array.isArray(v.rows) && v.rows.length && (v.rows[0].outputs || {}).band !== undefined) {
+    body = bandRangeTable(layerKey, def.key, (v.rows[0].outputs || {}).decision !== undefined);
+  }
+  if (!body) return '';
+  const off = settingEntry(layerKey, def.key).enabled === false;
+  return `<div class="rule-table-wrap${off ? ' is-off' : ''}">
+    ${off ? '<div class="rule-table-note">Switched off, so none of this is evaluated. It stays editable so it can be set up before being switched on.</div>' : ''}
+    ${body}</div>`;
 }
 
 // A layer setting, as a parameter row.
@@ -2553,11 +2676,13 @@ function settingRow(layerKey, d) {
     d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}">Also set at another layer</button>` : '',
   ].join('');
   const entry = settingEntry(layerKey, d.key);
+  const table = ruleTable(layerKey, d);
   return paramRow({
     id: `${layerKey}.${d.key}`, name: d.label, meaning: esc(d.meaning),
     control: settingEditor(layerKey, d), tags,
     on: entry.enabled !== false,
     onAction: `data-action="rule-enabled" data-list="${layerKey}" data-key="${esc(d.key)}"`,
+    below: table,
   });
 }
 
@@ -3262,7 +3387,7 @@ function renderModelHealth() {
   <div class="limits-grid" style="max-width:1000px;">
     <div class="card panel">
       <h2 class="panel-title">Score distribution</h2>
-      <div class="panel-sub" style="margin-bottom:10px;">Share of scored population per 50-point bucket, 0–1000.</div>
+      <div class="panel-sub" style="margin-bottom:10px;">Share of the scored population across the ${state.scoreMin} to ${state.scoreMax} score range.</div>
       <div class="dist-chart">${distBars}</div>
       <div class="dist-axis"><span>0</span><span>250</span><span>500</span><span>750</span><span>1000</span></div>
     </div>
@@ -3886,6 +4011,29 @@ document.addEventListener('click', (e) => {
       state.profileTab = 'rules';
       announce('Opened the Credit ladder section in Rules.');
       render(); break;
+    case 'refer-band': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      v.rows = v.rows && v.rows.length ? v.rows : [{ rangeMin: null, rangeMax: null, outputs: { bands: [] } }];
+      const o = v.rows[0].outputs = v.rows[0].outputs || {};
+      const list = o.bands = o.bands || [];
+      const b = el.dataset.val;
+      const i = list.indexOf(b);
+      if (i === -1) list.push(b); else list.splice(i, 1);
+      list.sort();
+      announce(list.length ? `Bands ${list.join(', ')} route to manual review.` : 'No band routes to manual review.');
+      markDirty(); render(); break;
+    }
+    case 'points-add': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      v.rows = v.rows || [];
+      v.rows.push({ rangeMin: null, rangeMax: null, outputs: { points: null } });
+      markDirty(); render(); break;
+    }
+    case 'points-remove': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      (v.rows || []).splice(+el.dataset.row, 1);
+      markDirty(); render(); break;
+    }
     case 'rule-enabled': {
       const entry = settingEntry(el.dataset.list, el.dataset.key);
       entry.enabled = entry.enabled === false;
@@ -4129,6 +4277,33 @@ document.addEventListener('change', (e) => {
       } else {
         entry.value[f] = raw;
       }
+      markDirty(); render(); break;
+    }
+    // A cell of the limit matrix.
+    case 'rule-cell': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      const raw = String(el.value ?? '').trim();
+      v.cells = v.cells || [];
+      v.cells[+el.dataset.row] = v.cells[+el.dataset.row] || [];
+      v.cells[+el.dataset.row][+el.dataset.col] =
+        raw === '' ? null : (el.type === 'number' ? Number(raw) : raw);
+      markDirty(); render(); break;
+    }
+    // A band's score range.
+    case 'rule-range': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      const raw = String(el.value ?? '').trim();
+      (v.rows[+el.dataset.row] || {})[el.dataset.field] = raw === '' ? null : Number(raw);
+      markDirty(); render(); break;
+    }
+    // A value the band produces: its decision, tenure, deposit or points.
+    case 'rule-output': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      const row = v.rows[+el.dataset.row];
+      row.outputs = row.outputs || {};
+      const raw = String(el.value ?? '').trim();
+      row.outputs[el.dataset.field] =
+        el.tagName === 'SELECT' ? raw : (raw === '' ? null : Number(raw));
       markDirty(); render(); break;
     }
     case 'sim-pop':
