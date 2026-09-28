@@ -18,6 +18,18 @@
           }
         ]
       }
+    ],
+    "redirects": [
+      {
+        "source": "/v2{,/**}",
+        "destination": "/",
+        "type": 301
+      },
+      {
+        "source": "/v1{,/**}",
+        "destination": "/",
+        "type": 301
+      }
     ]
   }
 }

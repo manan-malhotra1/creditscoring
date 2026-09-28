@@ -7,43 +7,38 @@ across every product and configured once.
 
 **Live:** https://credit-rule-console.web.app
 
-## Two builds
+## What it is
 
-The site serves both structures so they can be compared:
-
-| | | |
-|---|---|---|
-| [`/`](https://credit-rule-console.web.app/) | Chooser | Side-by-side summary of what differs |
-| [`/v1/`](https://credit-rule-console.web.app/v1/) | Six-tab build | Configuration grouped by topic, roughly 40 parameters |
-| [`/v2/`](https://credit-rule-console.web.app/v2/) | L0 to L6 waterfall | One spine in evaluation order, roughly 80 parameters, plus a single-customer assessment |
-
-v1 is the build as it stood at commit `63ce862`, kept unchanged apart from a
-corner badge for switching between the two. v2 is the current work and is where
-new development happens. Both share the same Global setup, maker-checker,
-versioning and audit behaviour; only the per-product configuration differs.
-
-## How v2 is organised
-
-The sidebar holds only what is shared. Everything product-specific lives inside
-a selected profile, as a numbered set-up sequence:
+One console. The per-product configuration follows the L0 to L6 waterfall from
+the Ecocash Credit Scoring Technical Solutioning v2.1, and the layers,
+parameter keys and value shapes are generated from the engine's own rule frame
+(`GET /rule-versions/frame`), so the console and the engine cannot drift apart.
 
 **Global setup**: shared by every product, not versioned per profile
-- **Model & score range**: the one scoring model and its 0–1000 scale
+- **Model & score range**: the one scoring model and its 0 to 100 scale
 - **Model health**: AUC / Gini / KS, PSI, calibration, score distribution (read-only)
-- **Parameters & features**: every customer detail a rule may read, named once and
-  tagged with the sections it is valid in
+- **Parameters & features**: every customer detail a rule may read
 - **Fraud lists**, **Reason-code catalogue**, **Users & audit**
 
-**A product profile**: its own parameters, bands and version history, organised as
-the decision waterfall from the Technodysis rule engine draft
-1. **Decision waterfall**, L0 to L6, in the order the engine evaluates them:
-   L0 data sufficiency and routing, L1 hard knockouts, L2 fraud and
-   first-payment-default screens, L3 score decisioning and thin-file handling,
+**A product profile**: its own values and version history, as a numbered sequence
+1. **Decision waterfall**, L0 to L6 in evaluation order: L0 data sufficiency and
+   routing, L1 hard knockouts, L2 fraud and first-payment-default screens,
+   L3 score decisioning and bands, L3a fallback scorecard and the credit ladder,
    L4 affordability, L5 exposure and limit assignment, L6 portfolio controls
 2. **Assess a customer**: one applicant run down the whole waterfall, showing
    which layer decided and which cap bound the limit
 3. **What-if simulation**: projected impact, derived from the profile's own bands
 4. **Publish**: gated until every parameter has a value, then sent to a checker
+
+## Keeping it aligned with the engine
+
+`api-tests/` holds a smoke test for the staging API and the frame-to-model
+generator. After a rule-set change on the engine, re-read the frame and
+regenerate, rather than hand-editing the layer definitions:
+
+```bash
+python3 api-tests/run.py
+```
 
 ## Design decisions worth knowing
 
@@ -68,9 +63,13 @@ the decision waterfall from the Technodysis rule engine draft
   names follow the Technodysis rule engine draft, so the credit team can work
   through that document and this console side by side. Two invariants are shown
   on the screen: any layer can stop the process, and limits only ever go down.
-- **Band limits are multipliers, not amounts.** A band carries a multiplier of
-  the product maximum plus its own maximum tenure and deposit, so changing the
-  product maximum rescales every band at once.
+- **Band limits are multipliers, not amounts.** A band carries its own maximum
+  tenure and deposit; the multiplier comes from the L3 limit matrix, on the band
+  and the affordability share together, so changing the product maximum
+  rescales every band at once.
+- **The model is generated, not transcribed.** Layer keys, rule keys, value
+  shapes and default values are read from the engine's rule frame. Copy is
+  ours; structure is the engine's.
 - **Unset parameters are counted, not hidden.** Anything still needing a value
   from the credit team is tagged, filterable, and blocks publication.
 - **Overlaps are flagged, not resolved.** Account age is gated in L0, L1 and L2
@@ -103,10 +102,12 @@ firebase deploy --only hosting:credit-console
 ## Files
 
 ```
-index.html        the chooser landing page
-assets/           the Sasai logo, shared by both builds
-v1/               the six-tab build, frozen at commit 63ce862
-v2/               the L0 to L6 waterfall build, where development continues
+index.html        page shell (sidebar, top bar, view container, live region)
+styles.css        all styling
+data.js           layer definitions, parameter catalogue, reason codes, seed profiles
+app.js            state, per-screen renderers, derivations, event delegation
+assets/           the Sasai logo
+api-tests/        staging API smoke test and poller
 ```
 
 `assets/` holds the official Sasai logo as SVG: `sasai-logo.svg` for light
@@ -115,9 +116,3 @@ backgrounds, `sasai-logo-reversed.svg` for the navy sidebar and header,
 browser tab. The artwork's own colours are navy `#224989` and teal `#6BC0CF`,
 which sit a shade off the interface palette below and are left as drawn.
 
-Each build is four files:
-
-- `index.html`: page shell (sidebar, top bar, view container, live region)
-- `styles.css`: all styling
-- `data.js`: layer definitions, parameter catalogue, reason codes, seed profiles
-- `app.js`: state, per-screen renderers, derivations, and event delegation

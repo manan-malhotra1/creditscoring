@@ -8,127 +8,47 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  html, body { margin: 0; padding: 0; background: #F2F4F7; }
-  body {
-    font-family: Montserrat, Arial, Helvetica, sans-serif;
-    color: #101828; -webkit-font-smoothing: antialiased;
-    min-height: 100vh; display: flex; flex-direction: column;
-  }
-  :focus-visible { outline: 2px solid #144989; outline-offset: 2px; border-radius: 6px; }
-  header {
-    background: linear-gradient(180deg, #172E7B 0%, #144989 100%);
-    color: #fff; padding: 30px 32px;
-  }
-  .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .brand-logo { display: block; width: 126px; height: auto; }
-  .brand-sub {
-    font-size: 12.5px; color: #9FC6E8; letter-spacing: 0.2px;
-    padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.28);
-  }
-  h1 { margin: 22px 0 0 0; font-size: 25px; font-weight: 700; }
-  .lede { margin: 8px 0 0 0; font-size: 14px; color: #CFE0F0; max-width: 760px; line-height: 1.6; text-wrap: pretty; }
-  main { flex: 1; padding: 28px 32px 56px 32px; max-width: 1180px; width: 100%; box-sizing: border-box; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
-  .card {
-    background: #fff; border: 1px solid #E4E7EC; border-radius: 14px;
-    padding: 22px 24px; display: flex; flex-direction: column;
-  }
-  .card-v1 { border-top: 4px solid #F5B546; }
-  .card-v2 { border-top: 4px solid #12B76A; }
-  .pill {
-    align-self: flex-start; font-size: 11.5px; font-weight: 700;
-    letter-spacing: 0.4px; text-transform: uppercase;
-    padding: 3px 10px; border-radius: 20px; margin-bottom: 10px;
-  }
-  .pill-v1 { background: #FFF8E6; color: #7A5B12; border: 1px solid #F5DFA5; }
-  .pill-v2 { background: #ECFDF3; color: #067647; border: 1px solid #ABEFC6; }
-  h2 { margin: 0; font-size: 19px; font-weight: 700; }
-  .card-sub { margin: 6px 0 14px 0; font-size: 13px; color: #667085; line-height: 1.6; text-wrap: pretty; }
-  ul { margin: 0 0 18px 0; padding-left: 20px; font-size: 13px; color: #344054; line-height: 1.75; }
-  .btn {
-    align-self: flex-start; margin-top: auto;
-    padding: 10px 20px; border-radius: 8px; border: 1px solid #144989;
-    background: #144989; color: #fff; font: 600 13.5px Montserrat, Arial, sans-serif;
-    text-decoration: none; display: inline-block;
-  }
-  .btn:hover { background: #172E7B; border-color: #172E7B; }
-  .note {
-    margin-top: 22px; padding: 14px 16px;
-    background: #fff; border: 1px solid #E4E7EC; border-left: 3px solid #48C2CF;
-    border-radius: 0 10px 10px 0; font-size: 13px; color: #344054; line-height: 1.65;
-    max-width: 900px; text-wrap: pretty;
-  }
-  table { border-collapse: collapse; margin-top: 22px; font-size: 13px; width: 100%; max-width: 900px; background: #fff;
-          border: 1px solid #E4E7EC; border-radius: 10px; overflow: hidden; }
-  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #F2F4F7; }
-  th { background: #F9FAFB; font-size: 11.5px; font-weight: 700; letter-spacing: 0.5px;
-       text-transform: uppercase; color: #667085; }
-  td:first-child { color: #667085; }
-  h3 { margin: 26px 0 0 0; font-size: 15px; font-weight: 700; }
-</style>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <img class="brand-logo" src="assets/sasai-logo-reversed.svg" alt="Sasai" width="126" height="26" />
-    <span class="brand-sub">Credit Rule Engine Console</span>
-  </div>
-  <h1>Two builds, side by side</h1>
-  <p class="lede">The same console organised two different ways. v1 groups configuration into six product tabs. v2 follows the L0 to L6 decision waterfall from the Technodysis rule engine draft. Open either, and switch between them from the badge in the corner.</p>
-</header>
+<div class="shell">
 
-<main>
-  <div class="cards">
-    <section class="card card-v1">
-      <span class="pill pill-v1">v1</span>
-      <h2>Six-tab build</h2>
-      <p class="card-sub">Configuration split across four tabs by topic, with rules held separately from the parameters they act on.</p>
-      <ul>
-        <li>Fallback scorecard, Score bands, Limits &amp; affordability, Rules</li>
-        <li>Rules grouped into an eligibility and coverage fork, then a scored path</li>
-        <li>Band limits as absolute amounts</li>
-        <li>Around 40 configurable parameters</li>
-      </ul>
-      <a class="btn" href="v1/">Open v1</a>
-    </section>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img class="brand-logo" src="assets/sasai-logo-reversed.svg" alt="Sasai" width="112" height="23" />
+      <div class="brand-sub">Credit Rule Engine Console</div>
+    </div>
 
-    <section class="card card-v2">
-      <span class="pill pill-v2">v2</span>
-      <h2>L0 to L6 waterfall</h2>
-      <p class="card-sub">One spine in the order the engine evaluates, matching the vocabulary the credit team already has in writing.</p>
-      <ul>
-        <li>Seven layers, L0 routing through L6 portfolio controls</li>
-        <li>Every parameter has exactly one home</li>
-        <li>Band limits as a multiplier of the product maximum, plus tenure and deposit</li>
-        <li>Around 80 parameters, with unset ones counted and blocking publication</li>
-        <li>Assess one customer against the draft and see which layer decided</li>
-      </ul>
-      <a class="btn" href="v2/">Open v2</a>
-    </section>
-  </div>
+    <nav class="sidebar-nav" id="nav">
+      <div class="nav-heading">Configure</div>
+    </nav>
 
-  <h3>What changed between them</h3>
-  <table>
-    <thead><tr><th>Area</th><th>v1</th><th>v2</th></tr></thead>
-    <tbody>
-      <tr><td>Product tabs</td><td>Six</td><td>Four: waterfall, assess, simulate, versions</td></tr>
-      <tr><td>Organising principle</td><td>Topic, with our own numbering</td><td>The draft's L0 to L6 evaluation order</td></tr>
-      <tr><td>Affordability</td><td>Conditions in Rules, parameters in Limits</td><td>Both in L4</td></tr>
-      <tr><td>Band limit</td><td>Absolute dollar amount</td><td>Multiplier of the product maximum</td></tr>
-      <tr><td>Tenure and deposit per band</td><td>Not configurable</td><td>Configurable</td></tr>
-      <tr><td>Portfolio controls</td><td>Throttles and pilot caps</td><td>Adds kill switch, random approval holdout, concentration caps, macro tightening</td></tr>
-      <tr><td>Unset parameters</td><td>Not tracked</td><td>Tagged, counted, filterable, gate publication</td></tr>
-      <tr><td>Overlapping rules</td><td>Not surfaced</td><td>Account age overlap across L0, L1 and L2 is flagged</td></tr>
-      <tr><td>Testing one customer</td><td>Four written-up sample decisions</td><td>An applicant run live down all seven layers, showing which cap bound the limit</td></tr>
-    </tbody>
-  </table>
+    <div class="sidebar-user">
+      <div class="user-avatar">TM</div>
+      <div class="user-meta">
+        <div class="user-name">T. Moyo</div>
+        <div class="user-role">Credit Risk, Maker</div>
+      </div>
+    </div>
+  </aside>
 
-  <div class="note">
-    Both builds share the same Global setup: one scoring model, one parameter catalogue, one reason-code catalogue, and the same maker-checker, versioning and audit behaviour. Only the per-product configuration is arranged differently, so a comparison is about structure rather than capability.
-  </div>
-</main>
+  <main class="main">
 
+    <header class="topbar" id="topbar"></header>
+
+    <div class="content" id="view"></div>
+
+  </main>
+
+  <div id="modal"></div>
+
+  <div id="a11y-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+</div>
+
+
+<script src="data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

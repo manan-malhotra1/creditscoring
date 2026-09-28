@@ -45,8 +45,9 @@ function makeProfile(seed, idx) {
       open: { ...DEFAULT_OPEN },
       fallback: makeFallback(`p${idx}`, seed.blank),
       coldStart: makeColdStart(`p${idx}`, seed.coldStart),
+      layers: structuredClone(seed.layers || LAYER_SEEDS.blank),
       limits: structuredClone(seed.limits),
-      touched: { ...(seed.touched || { simulate: false }) },
+      touched: { simulate: false, assess: false, ...(seed.touched || {}) },
     },
   };
 }
@@ -58,7 +59,7 @@ const state = {
   mode: 'view',              // 'view' (read-only) | 'edit'
   profiles: PROFILE_SEEDS.map(makeProfile),
   scoreMin: 0,
-  scoreMax: 1000,
+  scoreMax: 100,   // the engine scores 0 to 100, see Technical Solutioning v2.1 §6.5
   publishOpen: false,
   createOpen: false,
   dragging: null,
@@ -70,7 +71,14 @@ const state = {
   simRun: null,              // { at, population } of the last simulation run
   simPopIdx: 0,
   fbPreview: null,           // fallback-scorecard sample customer (per open profile)
-  diSample: 0,               // selected sample in the Decision explanation preview
+  applicant: null,           // the customer being assessed, shared across profiles
+  presetIdx: 0,              // which preset the applicant was last loaded from
+  assessOpen: { l0: true },  // which layers of the trace are expanded
+  layerShowAll: {},          // per layer: show every setting, not just essentials
+  pathOpen: { scored: false, thin: false, insufficient: false },
+  rowOpen: {},               // condition rows whose details are expanded
+  showOpenOnly: false,       // filter to parameters still needing a value
+  overlapTag: null,          // which overlap group is expanded
   // Global reason-code catalogue: wording only, shared by every profile.
   reasonCodes: structuredClone(REASON_CODES),
   modelFactors: structuredClone(MODEL_FACTORS),
@@ -602,227 +610,6 @@ function optionGroup(list, selected) {
     `<option value="${esc(value)}"${value === selected ? ' selected' : ''}>${esc(label)}</option>`).join('');
 }
 
-function renderRules() {
-  const c = cfg();
-  const activeCount = c.rules.filter(r => r.enabled).length;
-  const allOpen = Object.values(c.open).every(Boolean);
-
-  // Number within the branch, not across it: A1 and B1 are alternatives, so
-  // continuing 03, 04, 05… would read as consecutive steps when they are not.
-  const seq = {};
-  const sectionNum = (groupKey) => {
-    const g = SECTION_GROUPS.find(x => x.key === groupKey);
-    seq[groupKey] = (seq[groupKey] || 0) + 1;
-    if (g.prefix) return g.prefix + seq[groupKey];
-    // Universal and fork steps share one running count: 01, 02.
-    seq._top = (seq._top || 0) + 1;
-    return String(seq._top).padStart(2, '0');
-  };
-
-  const sectionCards = SECTIONS.map(([key, title, desc, shortTitle, groupKey], i) => {
-    const rules = c.rules.filter(r => r.section === key);
-    const open = !!c.open[key];
-    const enabledCount = rules.filter(r => r.enabled).length;
-
-    const ruleRows = open ? rules.map(r => {
-      const badParam = !paramValidIn(r.param, key);
-      const badAction = !actionValidIn(r.action, key);
-      const badOp = !operatorValidFor(r.op, r.param);
-      const warnings = [
-        badParam ? `Parameter <strong>${esc(labelOf(r.param))}</strong> is not valid in ${esc(title)}. Pick a parameter tagged for this section, or add the tag in <span class="nav-link" data-nav="params">Global setup</span>.` : '',
-        badAction ? `Action <strong>${esc(ACTLABEL[r.action] || r.action)}</strong> is not available in ${esc(title)}.` : '',
-        badOp && !badParam ? `Operator <strong>${esc(OPLABEL[r.op] || r.op)}</strong> does not apply to a ${esc(paramDef(r.param) ? paramDef(r.param).type : 'this')} parameter.` : '',
-      ].filter(Boolean);
-
-      // Keep an out-of-scope selection visible rather than silently dropping it.
-      const paramOptions = PARAM_GROUPS.map(([g, gLabel]) => {
-        const opts = paramsForSection(key).filter(d => d.group === g);
-        return opts.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(opts.map(d => [d.key, d.label]), r.param)}</optgroup>` : '';
-      }).join('') + (badParam
-        ? `<optgroup label="Not valid in this section"><option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} (not valid here)</option></optgroup>`
-        : '');
-
-      const opOptions = optionGroup(operatorsForParam(r.param), r.op)
-        + (badOp ? `<option value="${esc(r.op)}" selected>${esc(OPLABEL[r.op] || r.op)} (not valid here)</option>` : '');
-
-      const actionOptions = optionGroup(actionsForSection(key), r.action)
-        + (badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} (not valid here)</option>` : '');
-
-      const confirming = state.confirmRemove === r.id;
-      return `
-      <div class="rule-row${warnings.length ? ' rule-row-warn' : ''}" style="background:${r.enabled ? '#fff' : '#FCFCFD'};">
-        <div class="rule-inner">
-          <button class="switch${r.enabled ? ' on' : ''}" data-action="toggle-rule" data-rule="${r.id}"
-            role="switch" aria-checked="${r.enabled ? 'true' : 'false'}"
-            aria-label="Rule ${esc(r.code)} enabled: ${esc(sentence(r))}"
-            title="Enable or disable this rule"><span class="knob"></span></button>
-          <div style="flex:1;min-width:0;">
-            <div class="rule-sentence" style="color:${r.enabled ? '#101828' : '#5D6B82'};">${esc(sentence(r))}</div>
-            <div class="rule-controls">
-              <select class="rule-param${badParam ? ' field-invalid' : ''}" data-change="rule-param" data-rule="${r.id}"
-                aria-label="Parameter for rule ${esc(r.code)}">${paramOptions}</select>
-              <select class="rule-op${badOp ? ' field-invalid' : ''}" data-change="rule-op" data-rule="${r.id}"
-                aria-label="Test for rule ${esc(r.code)}, ${esc(labelOf(r.param))}">${opOptions}</select>
-              ${valueEditor(r)}
-              <span class="rule-then">then</span>
-              <select class="rule-action${badAction ? ' field-invalid' : ''}" data-change="rule-action" data-rule="${r.id}"
-                aria-label="Action for rule ${esc(r.code)}">${actionOptions}</select>
-              <span class="rule-code">${esc(r.code)}</span>
-            </div>
-            ${warnings.map(w => `<div class="rule-warn">⚠ ${w}</div>`).join('')}
-            <div class="rule-rc-row">
-              <span class="rule-rc-label">Reason code</span>
-              <select class="rule-rc" data-change="rule-rc" data-rule="${r.id}"
-                aria-label="Reason code emitted by rule ${esc(r.code)}"
-                title="Code the engine emits when this rule determines the outcome">
-                <option value=""${r.rc ? '' : ' selected'}>(no code)</option>
-                ${state.reasonCodes.filter(c => c.kind === 'rule' && (c.active || c.code === r.rc))
-                  .map(c => `<option value="${esc(c.code)}"${c.code === r.rc ? ' selected' : ''}>${esc(c.code)} · ${esc(c.label)}${c.active ? '' : ' (inactive)'}</option>`).join('')}
-              </select>
-              <span class="rule-rc-hint">emitted automatically when this rule decides the outcome</span>
-            </div>
-          </div>
-          ${confirming
-            ? `<button class="rule-remove confirming" data-action="remove-rule-confirm" data-rule="${r.id}"
-                 aria-label="Confirm removing rule ${esc(r.code)}" title="Click again to remove rule ${esc(r.code)}">Remove?</button>`
-            : `<button class="rule-remove" data-action="remove-rule" data-rule="${r.id}"
-                 aria-label="Remove rule ${esc(r.code)}" title="Remove rule">×</button>`}
-        </div>
-      </div>`;
-    }).join('') : '';
-
-    const num = sectionNum(groupKey);
-    const html = `
-    <div class="card section-card" data-group="${groupKey}">
-      <div class="section-head" data-action="toggle-section" data-section="${key}"
-        role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}"
-        aria-label="Step ${num}, ${esc(title)}: ${enabledCount} of ${rules.length} rules active. ${open ? 'Collapse' : 'Expand'} section."
-        style="border-bottom:${open ? '1px solid #E4E7EC' : 'none'};">
-        <div class="section-num section-num-${groupKey}">${num}</div>
-        <div style="min-width:0;">
-          <h2 class="section-title">${esc(title)}</h2>
-          <div class="section-desc">${esc(desc)}</div>
-        </div>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:12px;">
-          <span class="section-count">${enabledCount} of ${rules.length} active</span>
-          <span class="section-chevron" aria-hidden="true">${open ? '▲' : '▼'}</span>
-        </div>
-      </div>
-      ${open ? `
-      <div style="padding:6px 0 14px 0;">
-        ${ruleRows}
-        <div class="add-rule-wrap">
-          <button class="add-rule" data-action="add-rule" data-section="${key}">+ Add rule to ${esc(shortTitle)}</button>
-        </div>
-      </div>` : ''}
-    </div>`;
-    return { groupKey, html };
-  });
-
-  /* ---------- The routing fork ---------- */
-
-  const coverageRules = c.rules.filter(r => r.section === 'coverage' && r.enabled).length;
-  const branchLabel = (g) => SECTIONS.filter(s2 => s2[4] === g).map(s2 => s2[1]);
-
-  // A compact map of the whole evaluation, so the branch is visible before you
-  // read a single rule.
-  const forkMap = `
-  <div class="fork-map" role="img" aria-label="Evaluation flow: everyone passes the eligibility gates, then the coverage check decides whether there is a valid score. If not, the customer is handled by step 1, the Fallback scorecard. If so, the scored path runs. Both then run the cross-cutting checks.">
-    <span class="fm-node">Every applicant</span>
-    <span class="fm-arrow" aria-hidden="true">→</span>
-    <span class="fm-node fm-universal">01 Eligibility gates</span>
-    <span class="fm-arrow" aria-hidden="true">→</span>
-    <span class="fm-node fm-fork">02 Valid score?</span>
-    <span class="fm-split" aria-hidden="true">
-      <span class="fm-split-line fm-split-up"></span>
-      <span class="fm-split-line fm-split-down"></span>
-    </span>
-    <span class="fm-branches">
-      <span class="fm-node fm-cold">No → Step 1, Fallback scorecard</span>
-      <span class="fm-node fm-scored">Yes → Scored path</span>
-    </span>
-    <span class="fm-arrow" aria-hidden="true">→</span>
-    <span class="fm-node fm-cross">Cross-cutting</span>
-    <span class="fm-arrow" aria-hidden="true">→</span>
-    <span class="fm-node fm-decision">Decision</span>
-  </div>`;
-
-  const forkBanner = `
-  <div class="fork-panel">
-    <div class="fork-panel-head">
-      <span class="fork-if">The fork</span>
-      <span class="fork-panel-sub">${coverageRules} coverage rule${coverageRules === 1 ? '' : 's'} decide whether the model score can be trusted. A customer takes one branch or the other, never both.</span>
-    </div>
-    <div class="fork-cols">
-      <div class="fork-col fork-col-cold">
-        <div class="fork-col-cond">If there is not enough data to trust a score</div>
-        <div class="fork-col-arrow" aria-hidden="true">↓</div>
-        <div class="fork-col-title">Step 1, <span class="nav-link" data-tab="fallback">Fallback scorecard</span></div>
-        <ul class="fork-col-list">
-          <li>Points scorecard sets the score from whatever the customer can show</li>
-          <li>Cold-start policy handles a customer with no data at all</li>
-        </ul>
-        <div class="fork-col-note">This path is handled entirely on that tab. None of the sections below run.</div>
-      </div>
-      <div class="fork-or" aria-hidden="true">or</div>
-      <div class="fork-col fork-col-scored">
-        <div class="fork-col-cond">Else, a valid high-confidence score</div>
-        <div class="fork-col-arrow" aria-hidden="true">↓</div>
-        <div class="fork-col-title">Scored path</div>
-        <ul class="fork-col-list">${branchLabel('scored').map(t => `<li>${esc(t)}</li>`).join('')}</ul>
-        <div class="fork-col-note">Runs only on a score the model is confident in. Skipped when data is insufficient.</div>
-      </div>
-    </div>
-  </div>`;
-
-  /* ---------- Assemble: cards, group dividers, and the fork after coverage ---------- */
-
-  const divider = (g) => `
-    <div class="group-divider group-divider-${g.key}">
-      <div class="group-divider-label">${esc(g.label)}</div>
-      <div class="group-divider-hint">${esc(g.hint)}</div>
-    </div>`;
-
-  let lastGroup = null;
-  const sections = sectionCards.map(({ groupKey, html }) => {
-    let out = '';
-    if (groupKey !== lastGroup) {
-      const g = SECTION_GROUPS.find(x => x.key === groupKey);
-      // The universal group needs no divider: it is simply the start.
-      if (g.key !== 'universal') out += divider(g);
-      lastGroup = groupKey;
-    }
-    out += html;
-    // The fork sits between the coverage check and the branch it chooses.
-    if (groupKey === 'fork') out += forkBanner;
-    return out;
-  }).join('');
-
-  return `
-  <div class="page-head" style="margin-bottom:16px;">
-    <div>
-      <h1 class="page-title">Rules</h1>
-      <p class="page-desc" style="max-width:820px;"><strong style="color:#101828;">Evaluation is a branch, not a checklist.</strong> Everyone passes the non-negotiable eligibility gates. The coverage check then decides whether the model produced a score worth trusting: if not, the customer is handled entirely by step 1, the <span class="nav-link" data-tab="fallback">Fallback scorecard</span>, and none of the sections here run. Everything below the fork needs a valid high-confidence score.</p>
-      <p class="page-desc" style="max-width:820px;margin-top:6px;">A rule is one sentence: <em>when something about the customer is true, do this.</em> Read the sentence, then change any part of it using the boxes underneath. Nothing here needs code.</p>
-    </div>
-    <div class="page-head-actions">
-      <div style="font-size:12.5px;color:#667085;">${activeCount} active of ${c.rules.length} rules</div>
-      <button class="btn btn-outline" style="padding:8px 14px;font-size:12.5px;" data-action="expand-all">${allOpen ? 'Collapse all' : 'Expand all'}</button>
-    </div>
-  </div>
-
-  <ol class="howto" style="max-width:860px;margin-bottom:18px;">
-    <li><strong>What to check</strong>: the customer detail being tested, like age, income or the model score. These are named once in <span class="nav-link" data-nav="params">Global setup → Parameters &amp; features</span>; here you only pick one. Each group below offers just the details that make sense for it, so an eligibility check can't accidentally read a daily portfolio counter.</li>
-    <li><strong>The test and the value</strong>: "at least 18 years", "is one of Active". The value box matches what you're testing: money, a percentage, a length of time, or a list to tick.</li>
-    <li><strong>What happens</strong>: pass to the next rule, decline, send to a person to review, or cap the limit. Again, only the outcomes that suit that group are offered.</li>
-    <li><strong>Reason code</strong>: what gets recorded if this rule is the one that decides the outcome. You choose the code here; the actual wording shown to staff and customers lives in the <span class="nav-link" data-nav="reasoncodes">Reason-code catalogue</span>.</li>
-  </ol>
-  <p class="howto-example" style="max-width:860px;margin-bottom:18px;">Use the switch on the left to turn a rule off without deleting it. It stops running but stays here so you can turn it back on.</p>
-
-  ${forkMap}
-
-  ${sections}`;
-}
 
 function renderBands() {
   const s = state;
@@ -1242,101 +1029,912 @@ function renderSimulate() {
       <div class="blast-note">${esc(deltaSummary())} ${r.blast > 5 ? 'Above the 5% review threshold, so a checker sign-off is required.' : 'Below the 5% review threshold.'}</div>
     </div>
   </div>
-
-  ${renderDecisionExplanation()}`;
+`;
 }
 
-// Read-only: shows the reason codes the engine WOULD emit for a sample customer.
-// Codes are resolved from the rule that fired, never from a hand-authored map.
-function renderDecisionExplanation() {
-  const sample = SAMPLE_DECISIONS[state.diSample] || SAMPLE_DECISIONS[0];
-  const rules = cfg().rules;
-  const ruleByCode = (code) => rules.find(r => r.code === code);
 
-  const outcomeColors = {
-    decline: ['#FEF3F2', '#B42318', '#FECDCA'],
-    approve: ['#ECFDF3', '#067647', '#ABEFC6'],
-    refer: ['#EFF4FF', '#172E7B', '#C7D7FE'],
-    route: ['#FFF8E6', '#7A5B12', '#F5DFA5'],
-  }[sample.outcomeKind] || ['#F2F4F7', '#344054', '#E4E7EC'];
+/* ---------- Single-customer assessment: the engine ---------- */
 
-  const emitted = (code, source, note) => {
-    const c = rcByCode(code);
-    return `
-    <div class="di-emit">
-      <span class="rule-code">${esc(code || 'n/a')}</span>
-      <div style="flex:1;min-width:0;">
-        <div class="di-emit-label">${esc(c ? c.label : 'Code not found in the catalogue')}</div>
-        <div class="di-emit-source">${source}</div>
-        ${c && c.consumer ? `<div class="di-emit-consumer">Consumer message: “${esc(c.consumer)}”</div>` : `<div class="di-emit-consumer di-none">No consumer message. Administrator/agent only</div>`}
-      </div>
-      ${note ? `<span class="di-emit-note">${esc(note)}</span>` : ''}
-    </div>`;
+// One applicant run down L0 to L6, in the order the engine evaluates. The two
+// invariants shown on the waterfall govern the trace: any layer can stop it,
+// and the limit only ever goes down. Every threshold is read from this
+// profile's own configuration, so editing a setting changes this immediately.
+
+function applicantState() {
+  if (!state.applicant) {
+    state.applicant = { ...APPLICANT_BASE, ...APPLICANT_PRESETS[0].values };
+  }
+  return state.applicant;
+}
+
+// Applicant value as a number, or null when the field is blank. Blank means
+// "not known about this customer", which is never silently read as zero.
+function aNum(key) {
+  const v = applicantState()[key];
+  if (v === '' || v == null || v === false) return v === false ? 0 : null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+// Setting value as a number, or null when the credit team has not set it yet.
+function sNum(layerKey, key) {
+  if (settingEntry(layerKey, key).enabled === false) return null;  // never evaluated
+  const n = settingScalar(layerKey, key);
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+// The whole value object, for a rule with more than one field.
+function sVal(layerKey, key) {
+  return settingEntry(layerKey, key).enabled === false ? {} : settingValue(layerKey, key);
+}
+
+const DAY_IN = { day: 1, days: 1, week: 7, weeks: 7, month: 30, months: 30, year: 365, years: 365 };
+function unitDays(u) { return DAY_IN[String(u || '').trim().toLowerCase().split(/\s+/)[0]] || null; }
+
+// Durations are written in whichever unit reads naturally where they are set:
+// a wallet age in days, an age in years, a cold-start gate in weeks. Both sides
+// of a comparison are converted to days once, here, rather than per rule.
+function durationDays(n, unit) {
+  const k = unitDays(unit);
+  return k == null || n == null ? null : n * k;
+}
+
+const MONEY_FMT = n => (Math.abs(n) >= 1000 ? '$' + n.toLocaleString('en-US') : '$' + n);
+
+function fmtAmount(n, type, unit) {
+  if (n == null) return 'not known';
+  if (type === 'currency') return MONEY_FMT(Math.round(n * 100) / 100);
+  if (type === 'percent') return n + '%';
+  if (type === 'days') return plural(n, 'day');
+  return unit ? `${n} ${unit}` : String(n);
+}
+
+// A check that cannot be run is reported as such. An unset threshold is a gap
+// in the configuration and a missing value is a gap in the data; neither is a
+// failure, and neither is quietly treated as a pass.
+function check(o) {
+  const { label, actual, threshold, dir, type, unit, effect, rc, why, blankMeans } = o;
+  const base = { label, why, effect: null, rc: null };
+  if (actual == null && blankMeans) {
+    return { ...base, state: 'ok', detail: blankMeans };
+  }
+  if (threshold == null) {
+    return { ...base, state: 'unset', detail: 'No threshold set yet, so this is not checked.' };
+  }
+  if (actual == null) {
+    return { ...base, state: 'unknown',
+      detail: cfg().coldStart.unknownIsNotFail
+        ? 'Not known for this customer. Unknown does not count as a failure.'
+        : 'Not known for this customer, and unknown counts as a failure here.',
+      ...(cfg().coldStart.unknownIsNotFail ? {} : { effect, rc }) };
+  }
+  const ok = dir === 'min' ? actual >= threshold : actual <= threshold;
+  return {
+    ...base, state: ok ? 'ok' : 'fail',
+    detail: `${fmtAmount(actual, type, unit)} against ${dir === 'min' ? 'a minimum of' : 'a maximum of'} ${fmtAmount(threshold, type, unit)}`,
+    effect: ok ? null : effect, rc: ok ? null : rc,
   };
+}
 
-  let body;
-  if (sample.outcomeKind === 'approve') {
-    const bound = ruleByCode(sample.boundRule);
-    body = `
-    <h3 class="di-group-label">Top contributing model factors</h3>
-    ${sample.factors.map((code, i) => {
-      const f = state.modelFactors.find(x => x.code === code);
-      return emitted(code, `Model factor${f ? ` · ${esc(labelOf(f.param))}` : ''}, mapped in Global setup`, `#${i + 1}`);
-    }).join('')}
-    <h3 class="di-group-label" style="margin-top:14px;">Constraint that bound the limit</h3>
-    ${bound
-      ? emitted(bound.rc, `Rule ${esc(bound.code)} fired: “${esc(sentence(bound))}”`, esc(sample.boundLabel))
-      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.boundRule)} is no longer in this profile, so no code is emitted.</div>`}`;
-  } else {
-    const fired = ruleByCode(sample.firedRule);
-    const isRoute = sample.outcomeKind === 'route';
-    const note = isRoute ? 'sent to the cold-start branch'
-      : (sample.outcomeKind === 'decline' ? 'stopped here' : 'routed to review');
-    body = `
-    <h3 class="di-group-label">${isRoute ? 'Rule that chose the branch' : 'Rule that determined the outcome'}</h3>
-    ${fired
-      ? emitted(fired.rc, `Rule ${esc(fired.code)} fired: “${esc(sentence(fired))}”`, note)
-      : `<div class="di-emit di-none" style="padding:12px 14px;">Rule ${esc(sample.firedRule)} is no longer in this profile, so no code is emitted.</div>`}
-    <h3 class="di-group-label" style="margin-top:14px;">Model factors</h3>
-    <div class="di-emit di-none" style="padding:12px 14px;">${isRoute
-      ? 'Not evaluated. There was not enough data to trust a score, which is why the customer was routed rather than scored.'
-      : 'Not evaluated. The application stopped before scoring, so no factor codes are emitted.'}</div>
-    ${isRoute ? `<h3 class="di-group-label" style="margin-top:14px;">What runs instead</h3>
-    <div class="di-emit" style="border-left-color:#F5B546;">
-      <div style="flex:1;min-width:0;">
-        <div class="di-emit-label">Cold-start path</div>
-        <div class="di-emit-source">The scored-path sections are skipped. Light entry gates decide whether a starter offer is made, and failing them defers rather than declines.</div>
-      </div>
-      <span class="di-emit-note">branch taken</span>
-    </div>` : ''}`;
+/* ---------- Generic condition evaluation ---------- */
+
+// The applicant field that answers a shared parameter, with the unit it is
+// carried in. Rules and cold-start gates are both written against parameters,
+// so they share one evaluator rather than each parsing values themselves.
+const PARAM_SOURCE = {
+  age: () => ({ v: aNum('age'), unit: 'years' }),
+  tenure: () => ({ v: aNum('walletAgeDays'), unit: 'days' }),
+  kyc: () => ({ v: applicantState().kyc }),
+  account: () => ({ v: applicantState().account }),
+  blocklist: () => ({ v: applicantState().blocklist }),
+  sim: () => ({ v: aNum('simAgeDays'), unit: 'days' }),
+  txnMonths: () => ({ v: aNum('txnMonths'), unit: 'months' }),
+  arrears: () => ({ v: aNum('arrearsDays90'), unit: 'days' }),
+  inflow: () => ({ v: aNum('inflow') }),
+  consistency: () => ({ v: aNum('consistency') }),
+  volatility: () => ({ v: aNum('volatility') }),
+  score: () => ({ v: aNum('score') }),
+  onTime: () => ({ v: aNum('onTimeInstalments') }),
+  cluster: () => ({ v: aNum('walletsOnDevice') }),
+  income: () => ({ v: aNum('income') }),
+  dailyApprovals: () => ({ v: aNum('approvalsToday') }),
+  dailyDisbursed: () => ({ v: aNum('disbursedToday') }),
+  balance: () => ({ v: aNum('inflow') }),
+};
+
+// Exposure is written three ways in the draft: on this product, in open loans
+// of this kind, and across every product. The rule's own wording says which.
+function exposureFor(value) {
+  const t = String(value || '').toLowerCase();
+  return /across products|total/.test(t)
+    ? { v: aNum('totalExposure'), what: 'across all products' }
+    : { v: aNum('productExposure'), what: 'on this product' };
+}
+
+// A condition the simulator cannot answer from an applicant is reported as not
+// evaluated, with what it would need. Guessing would be worse than saying so.
+const PARAM_UNAVAILABLE = {
+  afford: 'the instalment, which L4 works out further down',
+  pd: 'a probability of default from the model',
+  confidence: 'model coverage, checked as a setting at L0 instead',
+  popAffected: 'the blast radius of the draft, which is a portfolio figure',
+  pilotCell: 'the cell this application came from',
+  pilotExposure: 'total pilot exposure, which is a portfolio figure',
+  device: 'the device type on file',
+  avgBalance: 'a 90-day average balance',
+  outflow: 'average monthly outflow',
+  activeDays: 'the active-days ratio, checked as a setting at L0 instead',
+  recharge: 'recharge regularity',
+};
+
+// Evaluates one condition (a rule or a cold-start gate) against the applicant.
+// Returns null when the condition cannot be answered, so callers can say so.
+function evalCondition(param, op, value) {
+  const def = paramDef(param);
+  if (!def) return { runnable: false, reason: 'this parameter is no longer defined in Global setup' };
+  if (PARAM_UNAVAILABLE[param]) return { runnable: false, reason: PARAM_UNAVAILABLE[param] };
+
+  if (param === 'exposure') {
+    const { v, what } = exposureFor(value);
+    const thr = parseFloat(String(splitValue(value).num).replace(/,/g, ''));
+    if (v == null || !Number.isFinite(thr)) return { runnable: false, reason: 'an open balance for this customer' };
+    return { runnable: true, ok: op === 'lte' ? v <= thr : op === 'eq' ? v === thr : v >= thr,
+      actual: MONEY_FMT(v) + ' ' + what, threshold: MONEY_FMT(thr) };
   }
 
-  return `
-  <div class="card panel" style="margin-top:16px;">
-    <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
-      <div style="min-width:0;">
-        <h2 class="panel-title">Decision explanation <span class="mode-pill" style="vertical-align:middle;margin-left:6px;">Read-only</span></h2>
-        <div class="panel-sub" style="max-width:660px;">The reason codes the engine would emit for a sample customer, resolved from the rules and model factors that actually fired. Nothing here is authored: change a rule's reason code in the Rules tab and this changes with it.</div>
-      </div>
-      <div class="di-tabs">
-        ${SAMPLE_DECISIONS.map((s, i) => `
-          <button class="di-tab${i === state.diSample ? ' active' : ''}" data-action="di-sample" data-idx="${i}"
-            aria-pressed="${i === state.diSample ? 'true' : 'false'}"
-            aria-label="Show the decision explanation for ${esc(s.name)}: ${esc(s.outcome)}">${esc(s.name)}</button>`).join('')}
-      </div>
-    </div>
+  const src = PARAM_SOURCE[param];
+  if (!src) return { runnable: false, reason: `a value for ${labelOf(param).toLowerCase()}` };
+  const got = src();
+  if (got.v == null || got.v === '') return { runnable: false, reason: `a value for ${labelOf(param).toLowerCase()}` };
 
-    <div class="di-body">
-      <div class="di-customer">
-        <div>
-          <div class="di-customer-name">${esc(sample.name)}</div>
-          <div class="di-customer-sub">${esc(sample.summary)}</div>
-        </div>
-        <span class="chip" style="background:${outcomeColors[0]};color:${outcomeColors[1]};border:1px solid ${outcomeColors[2]};">${esc(sample.outcome)}</span>
-      </div>
-      <div class="di-detail">${esc(sample.detail)}</div>
-      ${body}
+  if (def.type === 'category') {
+    const list = catList(value).map(s => s.toLowerCase());
+    const cur = String(got.v).toLowerCase();
+    const inList = list.some(x => cur === x || cur.startsWith(x));
+    const met = op === 'notin' ? !inList : inList;
+    return { runnable: true, ok: met, actual: String(got.v), threshold: catList(value).join(' or ') };
+  }
+
+  const parts = splitValue(value);
+  const thr = parseFloat(String(parts.num).replace(/,/g, ''));
+  if (!Number.isFinite(thr)) return { runnable: false, reason: 'a numeric threshold on this condition' };
+
+  let a = got.v, t = thr, shown = parts.num + (parts.suffix ? ' ' + parts.suffix : '');
+  if (def.type === 'duration') {
+    // The value carries its own unit word; fall back to the parameter's.
+    const valueUnit = unitDays(parts.suffix) ? parts.suffix : def.unit;
+    a = durationDays(got.v, got.unit || def.unit);
+    t = durationDays(thr, valueUnit);
+    if (a == null || t == null) return { runnable: false, reason: 'a comparable unit of time' };
+  }
+  const meets = op === 'lte' ? a <= t : op === 'eq' ? a === t : a >= t;
+  return { runnable: true, ok: meets, actual: fieldDisplay(param, got), threshold: shown };
+}
+
+function fieldDisplay(param, got) {
+  const def = paramDef(param);
+  if (!def) return String(got.v);
+  if (def.type === 'currency') return MONEY_FMT(got.v);
+  const u = got.unit || def.unit;
+  return u ? `${got.v} ${u}` : String(got.v);
+}
+
+// A rule becomes a trace line. `pass` rules stop the application when the
+// condition is NOT met; every other action fires when it IS met.
+function ruleCheck(r) {
+  const res = evalCondition(r.param, r.op, r.value);
+  const label = sentence(r);
+  if (!res.runnable) {
+    return { label, state: 'unknown', code: r.code, detail: `Not evaluated here: needs ${res.reason}.` };
+  }
+  const fires = r.action === 'pass' ? !res.ok : res.ok;
+  return {
+    label, code: r.code,
+    detail: `${res.actual} against ${res.threshold}`,
+    state: fires ? (r.action === 'ladder' ? 'fired' : 'fail') : 'ok',
+    effect: fires ? (r.action === 'pass' ? 'decline' : r.action) : null,
+    rc: fires ? r.rc : null,
+  };
+}
+
+// What an action does to the application. Caps do not stop it; they are applied
+// when the limit is assembled at L5.
+const ACTION_STOPS = { decline: 'decline', refer: 'refer', hold: 'hold', throttle: 'hold' };
+
+/* ---------- Single-customer assessment: the walk ---------- */
+
+// Runs the applicant down the waterfall. Returns one entry per layer plus the
+// caps that assembled the limit, so the trace and the summary are the same
+// computation read two ways.
+function assess() {
+  const c = cfg();
+  const a = applicantState();
+  const L = {};                       // layer key -> trace entry
+  LAYER_KEYS.forEach(k => { L[k] = { key: k, checks: [], rules: [], status: 'pending', note: '' }; });
+  const rulesIn = () => [];   // conditions are the layer settings now
+
+  let stopped = null;                 // { layer, kind, rc, why } once something stops it
+  const stop = (layer, kind, rc, why) => { if (!stopped) stopped = { layer, kind, rc, why }; };
+  // A stopping check explains itself with both its name and what it measured,
+  // since the name alone ("Dormancy") does not say why the customer failed.
+  const stopWhy = x => (x.code ? `${x.code}: ${x.label}` : x.label) + (x.detail ? ` (${x.detail})` : '');
+
+  /* --- L0: is there enough data to score this customer at all? --- */
+  // The real routing rule, from §6.2: all-must-pass on sufficiency, any-one-
+  // fails on the hard floor, deliberately unweighted. L0 never declines.
+  const l0 = L.layer_0;
+  // Which applicant field answers each L0 parameter, and in which direction.
+  const L0_FIELD = {
+    feature_completeness: { field: 'featureCompleteness', dir: 'min', type: 'percent' },
+    wallet_tenure:        { field: 'walletAgeDays',       dir: 'min', type: 'days' },
+    transaction_history:  { field: 'activeDays90',        dir: 'min', type: 'count', unit: 'active days in 90' },
+    dormancy:             { field: 'daysSinceLastTxn',    dir: 'max', type: 'days' },
+    model_confidence:     { field: 'modelConfidence',     dir: 'min', type: 'percent', neverNoFile: true },
+    score_staleness_limit:{ field: 'scoreAgeDays',        dir: 'max', type: 'days' },
+    repeat_path_threshold:{ field: 'closedLoans',         dir: 'min', type: 'count', unit: 'closed loans', routingNeutral: true },
+  };
+  let belowFloor = 0, belowSufficiency = 0;
+  (LAYERS.find(l => l.key === 'layer_0').settings || []).forEach(def => {
+    const entry = settingEntry('layer_0', def.key);
+    const map = L0_FIELD[def.key] || {};
+    if (entry.enabled === false) {
+      l0.checks.push({ label: def.label, state: 'unset',
+        detail: 'Switched off, so it is never evaluated and never appears as a reason.', why: def.meaning });
+      return;
+    }
+    const v = entry.value || {};
+    const actual = map.field ? aNum(map.field) : null;
+    const suff = v.sufficiency ?? v.threshold ?? v.value ?? null;
+    const floor = v.hardFloor ?? null;
+    if (suff == null && floor == null) {
+      l0.checks.push({ label: def.label, state: 'unset',
+        detail: 'No thresholds set yet, so this is not checked.', why: def.meaning });
+      return;
+    }
+    if (actual == null) {
+      l0.checks.push({ label: def.label, state: 'unknown',
+        detail: 'Not known for this customer.', why: def.meaning });
+      return;
+    }
+    const meets = t => (map.dir === 'max' ? actual <= t : actual >= t);
+    const okSuff  = suff == null || meets(suff);
+    const okFloor = floor == null || meets(floor);
+    if (!map.routingNeutral) {
+      if (!okFloor && !map.neverNoFile) belowFloor++;
+      else if (!okSuff) belowSufficiency++;
+    }
+    const word = map.dir === 'max' ? 'at most' : 'at least';
+    l0.checks.push({
+      label: def.label,
+      state: okSuff ? 'ok' : 'fail',
+      detail: `${fmtAmount(actual, map.type, map.unit)} against sufficiency ${word} `
+            + `${fmtAmount(suff, map.type, map.unit)}`
+            + (floor == null ? ', no hard floor set' : `, hard floor ${word} ${fmtAmount(floor, map.type, map.unit)}`)
+            + (okSuff ? '' : (okFloor || map.neverNoFile ? '. Below sufficiency, above the floor: thin file.' : '. Below the hard floor: no file.')),
+      effect: okSuff ? null : 'route', rc: okSuff ? null : 'RC-301',
+      why: def.meaning,
+    });
+  });
+  l0.rules = [];
+
+  const route = belowFloor > 0 ? 'insufficient' : (belowSufficiency > 0 ? 'thin' : 'scored');
+  const routeLabel = { scored: 'SCORED', thin: 'THIN FILE', insufficient: 'NO FILE' }[route];
+  l0.status = route === 'scored' ? 'passed' : 'routed';
+  l0.note = {
+    scored: 'Every parameter is at or above its sufficiency threshold, so the model score is trusted and the customer is banded at L3.',
+    thin: `${plural(belowSufficiency, 'parameter')} below sufficiency but none below a hard floor. The fallback scorecard at L3a scores this customer instead, capped at the score-source cap. A routing decision, not a decline.`,
+    insufficient: `${plural(belowFloor, 'parameter')} below a hard floor. The starter ladder at L3a applies. Still continues to L1: L0 never declines.`,
+  }[route];
+  const thinCapRule = null;
+
+
+  /* --- The cold-start branch replaces the rest of the waterfall --- */
+  if (route === 'insufficient' && !stopped) {
+    const cs = c.coldStart;
+    const gates = cs.gates.map(g => {
+      const res = evalCondition(g.param, g.op, g.value);
+      const label = `${labelOf(g.param)} ${OPLABEL[g.op]} ${g.value}`;
+      if (!res.runnable) {
+        return { label, state: cs.unknownIsNotFail ? 'unknown' : 'fail', locked: g.locked,
+          detail: cs.unknownIsNotFail
+            ? `Not known: needs ${res.reason}. Unknown does not count as a failure.`
+            : `Not known: needs ${res.reason}, and unknown counts as a failure.` };
+      }
+      return { label, state: res.ok ? 'ok' : 'fail', locked: g.locked,
+        detail: `${res.actual} against ${res.threshold}` };
+    });
+    const failed = gates.filter(g => g.state === 'fail');
+    const st = cs.starter;
+    const nano = Number(st.nanoAmount) || 0;
+    const dep = Number(st.depositPct) || 0;
+    const offers = [];
+    if (!failed.length && (st.type === 'nano' || st.type === 'both') && nano > 0) offers.push({ label: 'Nano limit', amount: nano });
+    if (!failed.length && (st.type === 'deposit' || st.type === 'both') && dep > 0) offers.push({ label: `Device with ${dep}% down payment`, amount: null });
+    const retry = new Date();
+    retry.setDate(retry.getDate() + (Number(cs.defer.retryDays) || 0));
+    return {
+      route, routeLabel, layers: L, coldStart: {
+        gates, failed, offers,
+        blockedByLocked: failed.some(g => g.locked),
+        retryOn: retry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        retryDays: Number(cs.defer.retryDays) || 0,
+        onTimeRequired: Number(cs.graduation.onTimeRequired) || 0,
+      },
+      outcome: failed.length
+        ? { kind: 'defer', label: 'Defer', at: 'Cold start', rc: 'RC-301',
+            why: `${plural(failed.length, 'light entry gate')} not met. The customer may apply again in ${plural(Number(cs.defer.retryDays) || 0, 'day')}.` }
+        : offers.length
+          ? { kind: 'approve', label: 'Starter offer', at: 'Cold start', rc: null,
+              why: 'Every light entry gate is met, so a starter offer is made with no score involved.' }
+          : { kind: 'defer', label: 'Defer', at: 'Cold start', rc: 'RC-301',
+              why: 'The gates are met but no starter offer is configured, so there is nothing to offer yet.' },
+      offer: null, caps: [],
+    };
+  }
+
+  /* --- L1: hard knockouts --- */
+  const l1 = L.layer_1;
+  const priorDefault = aNum('monthsSincePriorDefault');
+  l1.checks.push(
+    check({ label: 'Loans open right now', actual: aNum('activeLoans'), threshold: sNum('layer_1', 'concurrent_loan_cap'),
+      dir: 'max', type: 'count', unit: 'loans', effect: 'decline', rc: 'RC-401', why: 'Holding several loans at once is one of the fastest routes to over-indebtedness.' }),
+    check({ label: 'Currently delinquent', actual: aNum('currentDpd'), threshold: sNum('layer_1', 'currently_delinquent'),
+      dir: 'max', type: 'days', effect: 'decline', rc: 'RC-103', why: 'Days past due on any open loan.' }),
+    priorDefault == null
+      ? { label: 'Prior default lookback', state: 'ok', detail: 'No prior default on record.', why: 'Excludes a customer who has defaulted with Ecocash inside the lookback.' }
+      : check({ label: 'Prior default lookback', actual: priorDefault, threshold: sNum('layer_1', 'prior_default_lookback'),
+          dir: 'min', type: 'count', unit: 'months since', effect: 'decline', rc: 'RC-401', why: 'Excludes a customer who has defaulted with Ecocash inside the lookback.' }),
+  );
+  const staffRule = settingValue('layer_1', 'staff_related_parties');
+  if (a.isStaff) {
+    l1.checks.push({
+      label: 'Staff and related parties', state: staffRule === 'No special handling' ? 'ok' : 'fail',
+      detail: `Flagged as staff. This profile is set to “${staffRule || 'nothing yet'}”.`,
+      effect: staffRule === 'Exclude' ? 'decline' : staffRule === 'Refer to manual review' ? 'refer' : null,
+      rc: 'RC-103', why: 'Usually routed to review rather than declined, for governance reasons.',
+    });
+  }
+  l1.rules = [];
+  const l1Stop = [...l1.checks, ...l1.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+  if (l1Stop) stop('L1', ACTION_STOPS[l1Stop.effect], l1Stop.rc, stopWhy(l1Stop));
+  l1.status = l1Stop ? 'stopped' : 'passed';
+
+  /* --- L2: fraud and first-payment-default screens --- */
+  const l2 = L.layer_2;
+  if (!stopped) {
+    l2.checks.push(
+      check({ label: 'Minimum account age', actual: aNum('walletAgeDays'), threshold: sNum('layer_2', 'minimum_account_age'),
+        dir: 'min', type: 'days', effect: 'refer', rc: 'RC-104',
+        why: 'Wallet age as an eligibility screen. L0 checks the same field asking whether a score can be trusted.' }),
+      check({ label: 'Device changes', actual: aNum('deviceChanges6m'), threshold: sNum('layer_2', 'device_change_frequency'),
+        dir: 'max', type: 'count', unit: 'changes in 6 months', effect: 'refer', rc: 'RC-403',
+        why: 'Frequent changes can indicate device resale, which matters directly when the loan finances a device.' }),
+      check({ label: 'Application velocity', actual: aNum('applications30d'), threshold: sNum('layer_2', 'application_velocity'),
+        dir: 'max', type: 'count', unit: 'applications in 30 days', effect: 'refer', rc: 'RC-502',
+        why: 'Repeated applications in a short period suggest shopping for an approval.' }),
+      check({ label: 'Profile change velocity', actual: aNum('daysSinceProfileChange'), threshold: sNum('layer_2', 'profile_change_velocity'),
+        dir: 'min', type: 'days', effect: 'refer', rc: 'RC-502', blankMeans: 'No recent KYC or contact change.',
+        why: 'KYC or contact details changing just before an application is a takeover signal.' }),
+      check({ label: 'Pre-application inflow spike', actual: aNum('inflowSpike'), threshold: sNum('layer_2', 'pre_application_inflow_spike'),
+        dir: 'max', type: 'ratio', unit: 'x the 90-day average', effect: 'refer', rc: 'RC-502',
+        why: 'A sudden spike can mean the wallet was funded to look more creditworthy.' }),
+    );
+    const dta = settingValue('layer_2', 'dormant_then_suddenly_active');
+    if (a.dormantThenActive) {
+      l2.checks.push({
+        label: 'Dormant then suddenly active', state: dta === 'Off' || !dta ? 'ok' : 'fail',
+        detail: dta && dta !== 'Off' ? `Flagged, and this profile is set to “${dta}”.` : 'Flagged, but this screen is switched off.',
+        effect: dta === 'Decline' ? 'decline' : dta === 'Refer' ? 'refer' : null, rc: 'RC-502',
+        why: 'An account that was quiet and then became busy shortly before applying.',
+      });
+    }
+    l2.rules = [];
+    const l2Stop = [...l2.checks, ...l2.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l2Stop) stop('L2', ACTION_STOPS[l2Stop.effect], l2Stop.rc, stopWhy(l2Stop));
+    l2.status = l2Stop ? 'stopped' : 'passed';
+  } else { l2.status = 'not-reached'; }
+
+  /* --- L3: score decisioning, or the thin-file offer --- */
+  const l3 = L.layer_3;
+  const bands = c.bands;
+  const score = aNum('score');
+  let bandIdx = null, band = null, indicative = null, term = null, deposit = null, offerSource = '';
+  if (!stopped) {
+    if (route === 'thin') {
+      indicative = sNum('layer_3a', 'starter_limit_thin_file');
+      term = sNum('layer_3a', 'ladder_max_tenure');
+      deposit = sNum('layer_3a', 'ladder_deposit_requirement');
+      offerSource = 'Starter limit (thin-file path)';
+      l3.checks.push({
+        label: 'Thin-file offer', state: indicative == null ? 'unset' : 'ok',
+        detail: indicative == null
+          ? 'No starter limit set yet, so there is nothing to offer on this path.'
+          : `${MONEY_FMT(indicative)} over ${plural(term ?? 0, 'month')}, ${deposit ?? 0}% deposit. Set on the thin-file path at L0.`,
+        why: 'The model score is not used on this path. The limit is fixed and rises only as the customer repays.',
+      });
+      const ladder = [];
+      l3.rules = ladder;
+      const unlocked = ladder.filter(x => x.state === 'fail');
+      if (unlocked.length) {
+        l3.note = `${plural(unlocked.length, 'ladder condition')} met, so this customer is eligible for the next step up to the ${MONEY_FMT(sNum('layer_3a', 'max_ladder_limit') || 0)} ceiling.`;
+      }
+      if (indicative == null) stop('L3', 'decline', 'RC-301', 'no starter limit configured');
+    } else {
+      const cutoff = sNum('layer_3', 'master_approval_cutoff');
+      // First to fail wins: the master cutoff is stated as overriding the band
+      // table, so it is read before the band decision.
+      l3.checks.push(check({
+        label: 'Master approval cutoff', actual: score, threshold: cutoff,
+        dir: 'min', type: 'count', unit: 'points', effect: 'decline', rc: 'RC-114',
+        why: 'A single floor below which nobody is approved, whatever the band table says. Read before the band.',
+      }));
+      bands.forEach((b, i) => { if (score != null && score >= b.floor) { bandIdx = i; band = b; } });
+      if (band) {
+        const refer = catList(settingValue('layer_3', 'refer_band_boundaries')).some(x => x.toLowerCase() === band.label.toLowerCase());
+        indicative = bandLimit(band);
+        term = band.maxTenure;
+        deposit = effectiveDeposit(band);
+        offerSource = `${band.label} band`;
+        l3.checks.push({
+          label: 'Score band', state: band.decision === 'Decline' ? 'fail' : refer ? 'fail' : 'ok',
+          detail: `${plural(score ?? 0, 'point')} lands in ${band.label}, floor ${band.floor}. Decision: ${band.decision}.${refer ? ' This band is set to refer.' : ''}`,
+          effect: band.decision === 'Decline' ? 'decline' : refer ? 'refer' : null,
+          rc: band.decision === 'Decline' ? 'RC-114' : 'RC-602',
+          why: 'The band sets the indicative offer: a multiplier of the product maximum, plus a term and a deposit.',
+        });
+        if (indicative != null && band.decision !== 'Decline' && !refer) {
+          l3.checks.push({
+            label: 'Indicative offer', state: 'ok',
+            detail: `${MONEY_FMT(indicative)} at ${band.multiplier}x the product maximum, over ${plural(term ?? 0, 'month')}, ${deposit ?? 0}% deposit${depositFloorBinds(band) ? ` (the L5 floor, above this band's own ${band.deposit}%)` : ''}.`,
+            why: 'Every later layer can lower this figure. None can raise it.',
+          });
+        }
+      } else if (score != null) {
+        l3.checks.push({ label: 'Score band', state: 'fail',
+          detail: `${plural(score, 'point')} sits below every band floor.`, effect: 'decline', rc: 'RC-114',
+          why: 'No band covers this score, so there is no offer to make.' });
+      } else {
+        l3.checks.push({ label: 'Score band', state: 'unknown',
+          detail: 'No model score for this customer, but L0 routed them as scored. Check the L0 thresholds.',
+          why: 'The band is chosen from the score.' });
+      }
+      l3.rules = [];
+    }
+    if (thinCapRule) {
+      l3.checks.push({ label: `Coverage cap from ${thinCapRule.code}`, state: 'fail',
+        detail: `${thinCapRule.detail}. The limit is capped at the thin-file ceiling.`,
+        effect: 'capThin', rc: thinCapRule.rc,
+        why: 'A coverage rule at L0 can cap the limit without changing which path the customer takes.' });
+    }
+    const l3Stop = [...l3.checks, ...l3.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l3Stop) stop('L3', ACTION_STOPS[l3Stop.effect], l3Stop.rc, stopWhy(l3Stop));
+    l3.status = l3Stop ? 'stopped' : [...l3.checks, ...l3.rules].some(x => x.state === 'fail' && /^cap/.test(x.effect || '')) ? 'capped' : 'passed';
+  } else { l3.status = 'not-reached'; }
+
+  /* --- L4: affordability --- */
+  const l4 = L.layer_4;
+  let affordLimit = null, maxInstalment = null, usableIncome = null;
+  if (!stopped) {
+    const rawIncome = aNum('income');
+    const conf = aNum('incomeConfidence');
+    const confFloor = sNum('layer_4', 'income_confidence_threshold');
+    const haircut = sNum('layer_4', 'haircut_low_confidence');
+    const cut = rawIncome != null && conf != null && confFloor != null && conf < confFloor && haircut != null;
+    usableIncome = rawIncome == null ? null : (cut ? Math.round(rawIncome * (1 - haircut / 100)) : rawIncome);
+    if (rawIncome != null) {
+      l4.checks.push({
+        label: 'Income used', state: 'ok',
+        detail: cut
+          ? `${MONEY_FMT(rawIncome)} estimated at ${conf}% confidence, below the ${confFloor}% threshold, so a ${haircut}% haircut applies: ${MONEY_FMT(usableIncome)} is used.`
+          : `${MONEY_FMT(rawIncome)}, derived recurring income. The balance proxy is the fallback when confidence is below the threshold.`,
+        why: 'Wallet inflow is not income. A weak estimate produces a cautious offer rather than a confident wrong one.',
+      });
+    }
+    l4.checks.push(
+      check({ label: 'Minimum income', actual: usableIncome, threshold: sNum('layer_4', 'minimum_monthly_income'),
+        dir: 'min', type: 'currency', effect: 'decline', rc: 'RC-208', why: 'A floor below which no loan is offered, whatever the ratios say.' }),
+      check({ label: 'Income stability', actual: aNum('incomeCoV'), threshold: sNum('layer_4', 'income_stability_requirement'),
+        dir: 'max', type: 'ratio', unit: 'coefficient of variation', effect: 'refer', rc: 'RC-207',
+        why: 'Steady income supports an instalment more reliably than the same average arriving erratically.' }),
+    );
+    const ratio = sNum('layer_4', 'instalment_to_income_cap');
+    const floor = sNum('layer_4', 'net_disposable_income_floor');
+    const deduct = sVal('layer_4', 'existing_obligation_deduction').expectedValue === true;
+    const expenses = aNum('expenses') || 0;
+    const others = deduct ? (aNum('otherInstalments') || 0) : 0;
+    if (usableIncome != null && ratio != null) {
+      const byRatio = usableIncome * (ratio / 100);
+      const headroom = floor == null ? null : usableIncome - expenses - others - floor;
+      maxInstalment = headroom == null ? byRatio : Math.max(0, Math.min(byRatio, headroom));
+      const bound = headroom != null && headroom < byRatio ? 'disposable income' : 'the income ratio';
+      l4.checks.push({
+        label: 'Affordable instalment', state: maxInstalment > 0 ? 'ok' : 'fail',
+        detail: `${MONEY_FMT(Math.round(maxInstalment))} per month. ${ratio}% of ${MONEY_FMT(usableIncome)} is ${MONEY_FMT(Math.round(byRatio))}`
+          + (headroom == null ? ', with no disposable floor set.' : `; after ${MONEY_FMT(expenses)} expenses${deduct ? `, ${MONEY_FMT(others)} other instalments` : ''} and the ${MONEY_FMT(floor)} floor there is ${MONEY_FMT(Math.round(headroom))} left. Bound by ${bound}.`),
+        effect: maxInstalment > 0 ? null : 'decline', rc: 'RC-207',
+        why: 'A customer can be low risk and still be offered more than they can comfortably service.',
+      });
+      if (term) affordLimit = Math.max(0, maxInstalment * term);
+    } else {
+      l4.checks.push({ label: 'Affordable instalment', state: usableIncome == null ? 'unknown' : 'unset',
+        detail: usableIncome == null ? 'No income for this customer, so no instalment can be worked out.' : 'No instalment-to-income cap set yet.',
+        why: 'The affordability cap is the instalment the customer can carry, multiplied by the loan term.' });
+    }
+    l4.rules = [].map(r => {
+      // A-01 reads the affordability ratio, which is the cap L4 has just
+      // applied. Reporting it as "not evaluated" would hide the actual work.
+      const mult = /monthly instalment/i.test(String(r.value)) ? parseFloat(splitValue(r.value).num) : null;
+      if (mult != null && maxInstalment != null && Number.isFinite(mult)) {
+        const src = PARAM_SOURCE[r.param];
+        const have = src ? src().v : null;
+        if (have == null) return ruleCheck(r);
+        const target = mult * maxInstalment;
+        const met = r.op === 'lte' ? have <= target : have >= target;
+        const fires = r.action === 'pass' ? !met : met;
+        return { label: sentence(r), code: r.code, state: fires ? 'fail' : 'ok',
+          detail: `${MONEY_FMT(have)} against ${mult}\u00d7 the ${MONEY_FMT(Math.round(maxInstalment))} instalment, ${MONEY_FMT(Math.round(target))}.`,
+          effect: fires ? (r.action === 'pass' ? 'decline' : r.action) : null, rc: fires ? r.rc : null };
+      }
+      if (r.param === 'afford' && maxInstalment != null && usableIncome) {
+        return { label: sentence(r), code: r.code, state: 'ok',
+          detail: `Applied. The instalment is held at ${MONEY_FMT(Math.round(maxInstalment))}, which is ${Math.round((maxInstalment / usableIncome) * 100)}% of income.`,
+          effect: null, rc: null };
+      }
+      return ruleCheck(r);
+    });
+    const l4Stop = [...l4.checks, ...l4.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l4Stop) stop('L4', ACTION_STOPS[l4Stop.effect], l4Stop.rc, stopWhy(l4Stop));
+    l4.status = l4Stop ? 'stopped' : 'passed';
+  } else { l4.status = 'not-reached'; }
+
+  /* --- L5: the final limit, taken as the lowest of every cap --- */
+  const l5 = L.layer_5;
+  let caps = [], finalLimit = null, bindingCap = null;
+  if (!stopped) {
+    const productMax = sNum('layer_5', 'productMaximum');
+    const exposureCap = sNum('layer_5', 'totalCustomerExposureCap');
+    const held = aNum('totalExposure');
+    const headroom = exposureCap == null || held == null ? null : Math.max(0, exposureCap - held);
+    const tier = route === 'thin' ? settingValue('layer_3a', 'scorecard_cap') : null;
+
+    caps = [
+      { label: offerSource || 'Band limit', amount: indicative, from: 'L3',
+        note: indicative == null ? 'Nothing set, so this cap does not apply.' : '' },
+      { label: 'Affordability limit', amount: affordLimit == null ? null : Math.round(affordLimit), from: 'L4',
+        note: affordLimit == null ? 'Could not be worked out, so this cap does not apply.'
+          : `${MONEY_FMT(Math.round(maxInstalment))} a month over ${plural(term ?? 0, 'month')}.` },
+      { label: 'Product maximum', amount: productMax, from: 'L5',
+        note: productMax == null ? 'Not set yet, so this cap does not apply.' : '' },
+      { label: 'Customer exposure headroom', amount: headroom, from: 'L5',
+        note: headroom == null ? 'Needs both an exposure cap and a balance for this customer.'
+          : `${MONEY_FMT(exposureCap)} cap less ${MONEY_FMT(held)} already held.` },
+      { label: 'Device tier cap', amount: null, from: 'L5',
+        note: tier ? `Thin-file customers are limited to ${String(tier).toLowerCase()}, but this profile holds no price per tier, so nothing is capped here.`
+                   : 'No price per device tier is configured, so nothing is capped here.' },
+    ];
+    // Rules at L5 that cap rather than decline become caps in the same list, so
+    // there is one place where the limit is assembled.
+    [].forEach(r => {
+      const res = ruleCheck(r);
+      l5.rules.push(res);
+      if (res.state === 'fail' && (res.effect === 'capAfford' || res.effect === 'capThin')) {
+        const thr = parseFloat(String(splitValue(r.value).num).replace(/,/g, ''));
+        caps.push({ label: `Cap from ${r.code}`, amount: Number.isFinite(thr) ? thr : null, from: 'L5',
+          note: sentence(r), rc: r.rc });
+      }
+      if (res.state === 'fail' && res.effect === 'reduce' && caps.length) {
+        caps.push({ label: `Reduction from ${r.code}`, amount: null, from: 'L5', note: sentence(r), rc: r.rc, reduce: 0.3 });
+      }
+    });
+    if (thinCapRule) {
+      const ceiling = Number(c.fallback.tiers.thinCeiling);
+      caps.push({ label: 'Thin-file ceiling', amount: Number.isFinite(ceiling) ? ceiling : null, from: 'L0',
+        note: `Applied because ${thinCapRule.code} fired at L0.`, rc: thinCapRule.rc });
+    }
+
+    const live = caps.filter(x => x.amount != null);
+    if (live.length) {
+      bindingCap = live.reduce((lo, x) => (x.amount < lo.amount ? x : lo));
+      finalLimit = bindingCap.amount;
+      caps.forEach(x => { x.binding = x === bindingCap; });
+      // A percentage reduction is applied after the lowest cap, since it acts
+      // on whatever the limit turned out to be.
+      caps.filter(x => x.reduce).forEach(x => { finalLimit = finalLimit * (1 - x.reduce); x.amount = Math.round(finalLimit); });
+      finalLimit = roundLimit(finalLimit);
+    }
+
+    const minViable = sNum('layer_5', 'minimumViableLimit');
+    l5.checks.push({
+      label: 'Lowest cap wins', state: finalLimit == null ? 'unset' : 'ok',
+      detail: finalLimit == null
+        ? 'No cap could be worked out, so there is no limit to offer.'
+        : `${bindingCap.label} is the lowest at ${MONEY_FMT(bindingCap.amount)}. Rounded by “${settingValue('layer_5', 'limitRoundingIncrement') || 'no rule set'}” to ${MONEY_FMT(finalLimit)}.`,
+      why: 'The final limit is the lowest of every applicable cap. No layer can raise it.',
+    });
+    if (finalLimit == null) stop('L5', 'decline', 'RC-114', 'no limit could be assembled');
+    l5.checks.push(check({ label: 'Minimum viable limit', actual: finalLimit, threshold: minViable,
+      dir: 'min', type: 'currency', effect: 'decline', rc: 'RC-207',
+      why: 'Below this the loan is not worth making, so it is declined rather than offered.' }));
+    if (term != null && permittedTerms().length && !permittedTerms().includes(term)) {
+      l5.checks.push({ label: 'Loan term', state: 'fail',
+        detail: `${plural(term, 'month')} is not one of the permitted terms (${permittedTerms().map(t => t + ' mo').join(', ')}).`,
+        effect: 'refer', rc: 'RC-602', why: 'L5 owns which repayment periods may be offered at all.' });
+    }
+    const l5Stop = [...l5.checks, ...l5.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l5Stop) stop('L5', ACTION_STOPS[l5Stop.effect], l5Stop.rc, stopWhy(l5Stop));
+    l5.status = l5Stop ? 'stopped' : 'passed';
+  } else { l5.status = 'not-reached'; }
+
+  /* --- L6: does this approval remain acceptable for the book? --- */
+  const l6 = L.layer_6;
+  if (!stopped) {
+    if (sVal('layer_6', 'kill_switch').expectedValue === true) {
+      l6.checks.push({ label: 'Kill switch', state: 'fail', detail: 'On. Every approval is halted.',
+        effect: 'hold', rc: 'RC-601', why: 'A manual control that stops all lending immediately.' });
+    }
+    l6.checks.push(check({ label: 'Daily disbursement cap', actual: aNum('disbursedToday'), threshold: sNum('layer_6', 'daily_disbursement_cap'),
+      dir: 'max', type: 'currency', effect: 'hold', rc: 'RC-601', why: 'A ceiling on the total disbursed per day, controlling how fast exposure builds.' }));
+    if (route === 'thin') {
+      l6.checks.push(check({ label: 'Thin-file share of approvals', actual: aNum('thinShareToday'), threshold: sNum('layer_6', 'max_thin_file_share_of_approvals'),
+        dir: 'max', type: 'percent', effect: 'hold', rc: 'RC-601',
+        why: 'This customer is on the thin-file path, so this cap applies to them.' }));
+    }
+    // One tightening control in the engine: a trigger with a threshold and an
+    // action. It fires on portfolio delinquency, which a single application
+    // cannot tell us, so it is reported rather than applied.
+    const tighten = settingEntry('layer_6', 'automatic_tightening_trigger');
+    if (tighten.enabled !== false) {
+      const thr = tighten.value && tighten.value.threshold;
+      l6.checks.push({ label: 'Automatic tightening trigger', state: 'ok',
+        detail: `Armed at ${thr ?? 'no threshold set'}, action ${String(tighten.action || 'none').replace(/_/g, ' ')}. `
+              + 'It fires on early delinquency across the book, so it is not decided by this application.',
+        why: 'Tightens the cutoff automatically rather than waiting for a monthly review.' });
+    }
+    const holdout = sNum('layer_6', 'random_approval_holdout');
+    if (holdout) {
+      l6.checks.push({ label: 'Random approval holdout', state: 'ok',
+        detail: `${holdout}% of applications just below the cutoff are approved at random. Whether this one is chosen is not deterministic, so it is not simulated.`,
+        why: 'Without a holdout every new model trains only on customers the old rules passed.' });
+    }
+    l6.rules = [];
+    const l6Stop = [...l6.checks, ...l6.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
+    if (l6Stop) stop('L6', ACTION_STOPS[l6Stop.effect], l6Stop.rc, stopWhy(l6Stop));
+    l6.status = l6Stop ? 'stopped' : 'passed';
+  } else { l6.status = 'not-reached'; }
+
+  // "Capped the limit" belongs to the layer whose cap actually bound, not to
+  // L5, which only picks the lowest of them.
+  if (bindingCap && L[String(bindingCap.from).toLowerCase()] && L[String(bindingCap.from).toLowerCase()].status === 'passed') {
+    L[String(bindingCap.from).toLowerCase()].status = 'capped';
+  }
+
+  /* --- The outcome --- */
+  const kindLabel = { decline: 'Decline', refer: 'Refer for manual review', hold: 'Hold', defer: 'Defer' };
+  const outcome = stopped
+    ? { kind: stopped.kind, label: kindLabel[stopped.kind], at: stopped.layer, rc: stopped.rc, why: stopped.why }
+    : { kind: 'approve', label: route === 'thin' ? 'Approve at the thin-file limit' : 'Approve', at: 'L6', rc: null,
+        why: bindingCap ? `${bindingCap.label} was the lowest cap.` : 'No cap bound the limit.' };
+
+  const instalment = finalLimit != null && term ? Math.round((finalLimit / term) * 100) / 100 : null;
+  return {
+    route, routeLabel, layers: L, caps, bindingCap, outcome, coldStart: null,
+    offer: outcome.kind === 'approve' && finalLimit != null
+      ? { limit: finalLimit, term, deposit, instalment, band: band ? band.label : offerSource }
+      : null,
+  };
+}
+
+/* ---------- Single-customer assessment: the screen ---------- */
+
+const OUTCOME_STYLE = {
+  approve: ['#ECFDF3', '#067647', '#ABEFC6'],
+  decline: ['#FEF3F2', '#B42318', '#FECDCA'],
+  refer:   ['#EFF4FF', '#172E7B', '#C7D7FE'],
+  hold:    ['#FFF8E6', '#7A5B12', '#F5DFA5'],
+  defer:   ['#FFF8E6', '#7A5B12', '#F5DFA5'],
+};
+const CHECK_MARK = { ok: '✓', fail: '✕', fired: '↑', unset: '?', unknown: '?' };
+
+// One applicant field, editable in place inside the layer that reads it.
+function applicantEditor(f) {
+  const v = applicantState()[f.key];
+  const name = `${f.label}, for the customer being assessed`;
+  const common = `data-change="app-field" data-field="${esc(f.key)}"`;
+  if (f.type === 'toggle') {
+    return `<button class="switch switch-lg${v ? ' on' : ''}" data-action="app-toggle" data-field="${esc(f.key)}"
+      role="switch" aria-checked="${v ? 'true' : 'false'}" aria-label="${esc(name)}"><span class="knob"></span></button>`;
+  }
+  if (f.type === 'select') {
+    const def = paramDef(f.param) || {};
+    return `<select class="lim-select" ${common} aria-label="${esc(name)}">
+      ${(def.values || []).map(o => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+    </select>`;
+  }
+  const affix = f.type === 'currency' ? '$' : '';
+  const unit = f.unit || { percent: '%', days: 'days' }[f.type] || '';
+  const step = f.type === 'ratio' ? '0.01' : '1';
+  return `<span class="val-num lim-num">
+    ${affix ? `<span class="val-affix">${affix}</span>` : ''}
+    <input type="number" min="0" step="${step}" class="val-input" value="${esc(v ?? '')}"
+      placeholder="${esc(f.blankLabel || 'not known')}" ${common} aria-label="${esc(name)}" />
+    ${unit ? `<span class="val-unit">${esc(unit)}</span>` : ''}
+  </span>`;
+}
+
+function checkLine(x) {
+  const fired = x.state === 'fail' || x.state === 'fired';
+  const rc = fired && x.rc ? `<span class="rule-code">${esc(x.rc)}</span>` : '';
+  const effLabel = x.effect === 'route' ? 'Route to another path' : (ACTLABEL[x.effect] || x.effect);
+  const tone = x.effect === 'route' ? ' chk-effect-route' : x.state === 'fired' ? ' chk-effect-good' : '';
+  const eff = fired && x.effect ? `<span class="chk-effect${tone}">${esc(effLabel)}</span>` : '';
+  return `
+  <div class="chk chk-${x.state}">
+    <span class="chk-mark" aria-hidden="true">${CHECK_MARK[x.state] || '·'}</span>
+    <div class="chk-text">
+      <div class="chk-label">${esc(x.label)}${x.code ? ` <span class="rule-code">${esc(x.code)}</span>` : ''}</div>
+      <div class="chk-detail">${esc(x.detail || '')}</div>
+      ${x.why ? `<div class="chk-why">${esc(x.why)}</div>` : ''}
     </div>
+    <div class="chk-right">${eff}${rc}</div>
+  </div>`;
+}
+
+function renderLimitWaterfall(r) {
+  const live = r.caps.filter(x => x.amount != null);
+  if (!live.length) return '';
+  const max = Math.max(...live.map(x => x.amount), 1);
+  const rows = r.caps.map(x => {
+    if (x.amount == null) {
+      return `
+      <div class="cap-row cap-na">
+        <div class="cap-name">${esc(x.label)} <span class="cap-from">${esc(x.from)}</span></div>
+        <div class="cap-bar-wrap"><span class="cap-none">does not apply</span></div>
+        <div class="cap-amt">n/a</div>
+      </div>`;
+    }
+    return `
+    <div class="cap-row${x.binding ? ' is-binding' : ''}">
+      <div class="cap-name">${esc(x.label)} <span class="cap-from">${esc(x.from)}</span></div>
+      <div class="cap-bar-wrap"><div class="cap-bar" style="width:${Math.max(2, (x.amount / max) * 100)}%;"></div></div>
+      <div class="cap-amt">${esc(MONEY_FMT(x.amount))}${x.binding ? '<span class="cap-tag">binds</span>' : ''}</div>
+    </div>`;
+  }).join('');
+  const notes = r.caps.filter(x => x.note).map(x => `<div class="cap-note"><strong>${esc(x.label)}:</strong> ${esc(x.note)}</div>`).join('');
+  return `
+  <div class="card panel">
+    <h2 class="panel-title">Where the limit was cut</h2>
+    <div class="panel-sub" style="margin-bottom:12px;">Limits only ever go down. The final limit is the lowest of every applicable cap, so the shortest bar is the one that decided the offer.</div>
+    <div class="cap-table">${rows}</div>
+    <div class="cap-notes">${notes}</div>
+  </div>`;
+}
+
+function renderColdStartTrace(cs) {
+  const gates = cs.gates.map(g => `
+    <div class="chk chk-${g.state}">
+      <span class="chk-mark" aria-hidden="true">${CHECK_MARK[g.state] || '·'}</span>
+      <div class="chk-text">
+        <div class="chk-label">${esc(g.label)}${g.locked ? ' <span class="tag-essential">Non-negotiable</span>' : ''}</div>
+        <div class="chk-detail">${esc(g.detail)}</div>
+      </div>
+    </div>`).join('');
+  return `
+  <div class="card panel">
+    <h2 class="panel-title">Cold-start branch</h2>
+    <div class="panel-sub" style="margin-bottom:12px;">L1 to L6 are replaced by a short, data-light path, so a customer with no history is deferred rather than declined. Configure it on the <span class="nav-link" data-layer="l0">L0</span> insufficient-data path.</div>
+    ${gates}
+    <div class="cap-notes">
+      ${cs.offers.length
+        ? `<div class="cap-note"><strong>Starter offer:</strong> ${cs.offers.map(o => esc(o.amount != null ? MONEY_FMT(o.amount) + ' ' + o.label.toLowerCase() : o.label)).join(', ')}. Graduates after ${esc(plural(cs.onTimeRequired, 'on-time instalment'))}.</div>`
+        : `<div class="cap-note"><strong>Retry:</strong> the customer may apply again on ${esc(cs.retryOn)}, ${esc(plural(cs.retryDays, 'day'))} from today.</div>`}
+      ${cs.blockedByLocked ? `<div class="cap-note"><strong>Non-negotiable gate failed:</strong> this cannot be waived by taking a deposit.</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderAssess() {
+  const r = assess();
+  const oc = OUTCOME_STYLE[r.outcome.kind] || OUTCOME_STYLE.hold;
+  const rc = r.outcome.rc ? rcByCode(r.outcome.rc) : null;
+
+  const presets = APPLICANT_PRESETS.map((p, i) => `
+    <button class="seg-btn${i === state.presetIdx ? ' active' : ''}" data-action="app-preset" data-idx="${i}"
+      aria-pressed="${i === state.presetIdx ? 'true' : 'false'}"
+      title="${esc(p.hint)}" aria-label="Load the ${esc(p.name)} applicant: ${esc(p.hint)}">${esc(p.name)}</button>`).join('');
+
+  const offer = r.offer ? `
+    <div class="offer-grid">
+      <div><div class="offer-k">Limit</div><div class="offer-v">${esc(MONEY_FMT(r.offer.limit))}</div></div>
+      <div><div class="offer-k">Term</div><div class="offer-v">${r.offer.term == null ? 'not set' : esc(plural(r.offer.term, 'month'))}</div></div>
+      <div><div class="offer-k">Deposit</div><div class="offer-v">${r.offer.deposit == null ? 'n/a' : esc(r.offer.deposit + '%')}</div></div>
+      <div><div class="offer-k">Instalment</div><div class="offer-v">${r.offer.instalment == null ? 'n/a' : esc(MONEY_FMT(r.offer.instalment))}</div></div>
+      <div><div class="offer-k">From</div><div class="offer-v offer-v-sm">${esc(r.offer.band)}</div></div>
+    </div>` : '';
+
+  const layers = LAYERS.map(layer => {
+    const t = r.layers[layer.key];
+    const fields = APPLICANT_FIELDS[layer.key] || [];
+    const open = !!state.assessOpen[layer.key];
+    const statusText = {
+      passed: 'Passed', stopped: 'Stopped here', capped: 'Capped the limit',
+      routed: 'Routed', 'not-reached': 'Not reached', pending: 'Not reached',
+    }[t.status];
+    const statusClass = { passed: 'ok', stopped: 'stop', capped: 'cap', routed: 'route' }[t.status] || 'skip';
+    const all = [...t.checks, ...t.rules];
+    const failed = all.filter(x => x.state === 'fail').length;
+    const summary = t.status === 'not-reached'
+      ? 'An earlier layer decided the application, so this one never ran.'
+      : failed ? `${plural(failed, 'check')} did not pass` : `${plural(all.length, 'check')} run, all passed`;
+    return `
+    <div class="alayer alayer-${statusClass}">
+      <button class="alayer-head" data-action="assess-layer" data-layer="${layer.key}" aria-expanded="${open ? 'true' : 'false'}"
+        aria-label="${esc(`${layer.num} ${layer.title}: ${statusText}. ${summary}`)}">
+        <span class="chip layer-num">${esc(layer.num)}</span>
+        <span class="alayer-text">
+          <span class="alayer-title">${esc(layer.title)}</span>
+          <span class="alayer-sum">${esc(summary)}</span>
+        </span>
+        <span class="alayer-status">${esc(statusText)}</span>
+        <span class="path-chev" aria-hidden="true">${open ? '▲' : '▼'}</span>
+      </button>
+      ${open ? `
+      <div class="alayer-body">
+        ${t.note ? `<p class="layer-intro">${esc(t.note)}</p>` : ''}
+        ${all.length ? all.map(checkLine).join('') : `<div class="chk chk-unset"><span class="chk-mark" aria-hidden="true">·</span><div class="chk-text"><div class="chk-detail">Nothing configured in this layer yet, so nothing was checked.</div></div></div>`}
+        ${fields.length ? `
+        <h4 class="path-sub">What this layer reads about the customer</h4>
+        <div class="afields">
+          ${fields.map(f => `
+          <div class="afield">
+            <label class="afield-label" for="af-${esc(f.key)}">${esc(f.label)}</label>
+            ${applicantEditor(f)}
+          </div>`).join('')}
+        </div>` : ''}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="assess-screen">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Assess a customer</h1>
+      <p class="page-desc" style="max-width:680px;">One applicant, run down L0 to L6 in the order the engine evaluates. Every threshold comes from this profile's own draft, so a change on the waterfall shows up here immediately.</p>
+    </div>
+  </div>
+
+  <div class="preset-bar">
+    <span class="preset-label">Start from</span>
+    <div class="preset-tabs">${presets}</div>
+    <button class="btn btn-outline btn-sm" data-action="app-reset">Reset this applicant</button>
+  </div>
+  <div class="preset-hint">${esc(APPLICANT_PRESETS[state.presetIdx] ? APPLICANT_PRESETS[state.presetIdx].hint : '')}</div>
+
+  <div class="card panel outcome-card" style="border-left:4px solid ${oc[1]};">
+    <div class="outcome-top">
+      <div style="min-width:0;">
+        <div class="outcome-kicker">Outcome at ${esc(r.outcome.at)} · routed as ${esc(r.routeLabel.toLowerCase())}</div>
+        <div class="outcome-label" style="color:${oc[1]};">${esc(r.outcome.label)}</div>
+        <div class="outcome-why">${esc(r.outcome.why)}</div>
+      </div>
+      <span class="chip" style="background:${oc[0]};color:${oc[1]};border:1px solid ${oc[2]};">${esc(r.outcome.kind === 'approve' ? 'Offer made' : 'No offer')}</span>
+    </div>
+    ${offer}
+    ${rc ? `
+    <div class="outcome-rc">
+      <span class="rule-code">${esc(rc.code)}</span>
+      <div>
+        <div class="rc-label">${esc(rc.label)}</div>
+        ${rc.consumer ? `<div class="rc-consumer">Message to the customer: “${esc(rc.consumer)}”</div>`
+                      : `<div class="rc-consumer rc-none">No customer message. Agent and audit only.</div>`}
+      </div>
+      <span class="rc-note">emitted</span>
+    </div>` : ''}
+  </div>
+
+  ${r.coldStart ? renderColdStartTrace(r.coldStart) : renderLimitWaterfall(r)}
+
+  <h2 class="panel-title" style="margin:20px 0 4px 0;">The trace</h2>
+  <div class="panel-sub" style="margin-bottom:10px;">Open a layer to see every check it ran and to change what the customer looks like. Any layer can stop the process, so once one does, the rest are not reached.</div>
+  <div class="alayers">${layers}</div>
   </div>`;
 }
 
@@ -1465,7 +2063,7 @@ function fbCompute() {
   return { score, signals, tier, band, bandIdx, limit, afford, incomeKnown };
 }
 
-function renderFallback() {
+function renderFallback(part) {
   const fb = cfg().fallback;
   const pv = fbPreviewState();
   const maxPts = fb.entries.filter(e => e.enabled).reduce((n, e) => n + (Number(e.points) || 0), 0);
@@ -1751,53 +2349,591 @@ function renderFallback() {
     </div>
   </div>`;
 
+
+  const pointsBlock = `
+  <h3 class="panel-title" style="margin-top:6px;">Fallback points scorecard</h3>
+  <div class="panel-sub" style="margin-bottom:10px;">For a customer L0 routed as thin file. Points are awarded for whatever the customer can show, summed, and treated as a score on the same 0–1000 scale, then capped because a points total is a rougher guess than a model score.</div>
+  ${entryRows}
+  <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
+    <button class="add-rule" data-action="fb-add">+ Add signal</button>
+    <span style="margin-left:auto;font-size:12.5px;font-weight:700;color:${overScale ? '#7A5B12' : '#344054'};">
+      Max achievable: ${maxPts} points${overScale ? ` · capped to ${state.scoreMax}` : ` · within the ${state.scoreMin}–${state.scoreMax} scale`}
+    </span>
+  </div>`;
+
+  const coverageBlock = `
+  <h3 class="panel-title" style="margin-top:18px;">Coverage tiers</h3>
+  <div class="panel-sub" style="margin-bottom:6px;">How much data is enough to trust the scorecard.</div>
+  ${tierRow('Full fallback', 'Enough signals present: score normally, capped at the thin-file ceiling.', numInput('fullMin', t.fullMin, 'at least&nbsp;signals:'))}
+  ${tierRow('Partial coverage', 'Fewer signals: offer capped at 50% of the thin-file ceiling ($' + (Number(t.thinCeiling) / 2) + ').', numInput('partialMin', t.partialMin, 'at least&nbsp;signals:'))}
+  ${tierRow('Zero-file', 'Too little data, in particular no inferable income. Skip scoring, assign a flat cold-start minimum.', numInput('zeroMin', t.zeroMin, '$'))}
+  ${tierRow('Thin-file ceiling', 'Hard cap on any fallback-scored offer.', numInput('thinCeiling', t.thinCeiling, '$'))}`;
+
+  if (part === 'coverage') return coverageBlock;
+  if (part === 'cold') return coldStartSection;
+  if (part === 'preview') return previewPanel;
+  if (part === 'points') return pointsBlock;
+  return coldStartSection + previewPanel;
+}
+
+
+/* ---------- The decision waterfall ---------- */
+
+// A layer setting still waiting on a value from the credit team.
+// A rule's value is an object whose fields differ by rule: {sufficiency,
+// hardFloor} at L0, {operator, threshold} for a comparison, {value} for a
+// scalar. Rather than a bespoke editor per shape, every field gets a labelled
+// control, so a rule shape the engine adds later needs no new code here.
+const VALUE_LABEL = {
+  sufficiency: 'Sufficiency', hardFloor: 'Hard floor', threshold: 'Threshold',
+  value: 'Value', months: 'Months', windowDays: 'Window, days',
+  maxPoints: 'Maximum points', expectedValue: 'Must be',
+  allowedValues: 'Allowed values', floorBehavior: 'Below the floor',
+  dormancyThresholdDays: 'Dormant after, days',
+  reactivationWindowDays: 'Reactivation window, days',
+  reactivationMinActivityCount: 'Minimum activity in the window',
+  currentWindowDays: 'Recent window, days', baselineWindowDays: 'Baseline window, days',
+  multiplier: 'Multiple of the baseline', operator: 'Comparison',
+};
+// Rendered by their own panel rather than as plain fields.
+const TABLE_FIELDS = ['rows', 'cells', 'cols', 'columns'];
+
+const OP_WORD = { gte: 'at least', lte: 'at most', gt: 'more than', lt: 'less than', eq: 'exactly' };
+
+function settingEntry(layerKey, key) {
+  const store = cfg().layers[layerKey] || (cfg().layers[layerKey] = {});
+  if (!store[key]) store[key] = { value: {}, enabled: true, action: null };
+  return store[key];
+}
+function settingValue(layerKey, key) {
+  return settingEntry(layerKey, key).value || {};
+}
+// The single number a simple rule carries, whatever field name it uses.
+function settingScalar(layerKey, key) {
+  const v = settingValue(layerKey, key);
+  for (const f of ['value', 'threshold', 'months', 'sufficiency']) {
+    if (v[f] !== undefined && v[f] !== null) return v[f];
+  }
+  return null;
+}
+function editableFields(v) {
+  return Object.keys(v || {}).filter(f => !TABLE_FIELDS.includes(f) && f !== 'operator');
+}
+// A rule needs attention when a field the engine will read has no value in it.
+function settingNeedsValue(def, val) {
+  const v = val || {};
+  const fields = editableFields(v);
+  if (!fields.length) return Object.keys(v).length === 0;
+  return fields.some(f => v[f] === null || v[f] === undefined || v[f] === '');
+}
+
+function layerSettingDefs(layer) {
+  return layer.settings || [];
+}
+
+// Every parameter across every layer that still needs a value.
+function openParameters() {
+  const out = [];
+  LAYERS.forEach(l => layerSettingDefs(l).forEach(d => {
+    if (settingNeedsValue(d, settingValue(l.key, d.key))) out.push({ layer: l, def: d });
+  }));
+  return out;
+}
+
+// Derived from the band multiplier and the product maximum, then rounded by the
+// profile's own rounding rule. Limits only ever go down, so this is a ceiling.
+function roundLimit(amount) {
+  const rule = settingValue('layer_5', 'limitRoundingIncrement') || '';
+  const step = /\$1,/.test(rule) ? 1 : /\$5,/.test(rule) ? 5 : /\$10,/.test(rule) ? 10 : 0;
+  if (!step || !isFinite(amount)) return amount;
+  return Math.floor(amount / step) * step;
+}
+function bandLimit(b) {
+  if (b.multiplier == null) return null;
+  const max = Number(settingValue('layer_5', 'productMaximum'));
+  if (!isFinite(max) || !max) return null;
+  return roundLimit(b.multiplier * max);
+}
+function bandLimitLabel(b) {
+  const v = bandLimit(b);
+  return v == null ? 'n/a' : `$${v}`;
+}
+
+// Settings sharing an overlap tag are set independently in different layers.
+function overlapPeers(tag) {
+  const peers = [];
+  LAYERS.forEach(l => (l.settings || []).forEach(d => {
+    if (d.overlap === tag) peers.push({ layer: l, def: d, value: settingValue(l.key, d.key) });
+  }));
+  return peers;
+}
+// The draft also gates account age through L1 and L2 rules, not just settings.
+function tenureOverlapRows() {
+  const rows = overlapPeers('tenure').map(p => ({
+    where: `${p.layer.num} setting`, what: p.def.label, value: p.value ? `${p.value} days` : 'not set',
+  }));
+  cfg().rules.filter(r => ['tenure', 'sim'].includes(r.param) && ['l1', 'l2'].includes(r.section))
+    .forEach(r => rows.push({
+      where: `${(LAYERS.find(l => l.key === r.section) || {}).num} rule ${r.code}`,
+      what: labelOf(r.param), value: r.value,
+    }));
+  return rows;
+}
+
+function fieldControl(layerKey, key, field, val, label) {
+  const common = `data-change="rule-field" data-list="${layerKey}" data-key="${esc(key)}" data-field="${esc(field)}"`;
+  const name = `${label} for ${key.replace(/_/g, ' ')}`;
+  if (typeof val === 'boolean') {
+    return `<button class="switch switch-lg${val ? ' on' : ''}" data-action="rule-flag"
+      data-list="${layerKey}" data-key="${esc(key)}" data-field="${esc(field)}"
+      role="switch" aria-checked="${val ? 'true' : 'false'}" aria-label="${esc(name)}"><span class="knob"></span></button>`;
+  }
+  if (Array.isArray(val)) {
+    return `<input class="lim-text" value="${esc(val.join(', '))}" placeholder="none set"
+      ${common} data-array="1" aria-label="${esc(name)}" />`;
+  }
+  if (typeof val === 'string') {
+    return `<input class="lim-text" value="${esc(val)}" placeholder="not set" ${common} aria-label="${esc(name)}" />`;
+  }
+  return `<span class="val-num lim-num">
+    <input type="number" step="any" class="val-input" value="${val === null || val === undefined ? '' : esc(val)}"
+      placeholder="not set" ${common} aria-label="${esc(name)}" />
+  </span>`;
+}
+
+// Every field of the rule's value, each labelled, plus the comparison word when
+// the rule carries one so the row reads as a sentence rather than a number.
+function settingEditor(layerKey, d) {
+  const v = settingValue(layerKey, d.key);
+  const fields = editableFields(v);
+  if (!fields.length) return `<span class="readonly-value">set in the table below</span>`;
+  const op = v.operator ? `<span class="val-unit">${esc(OP_WORD[v.operator] || v.operator)}</span>` : '';
+  return `<span class="rule-fields">${op}${fields.map(f => `
+    <span class="rule-field">
+      <span class="rule-field-label">${esc(VALUE_LABEL[f] || f)}</span>
+      ${fieldControl(layerKey, d.key, f, v[f], VALUE_LABEL[f] || f)}
+    </span>`).join('')}</span>`;
+}
+
+/* ---------- One row type for every parameter ---------- */
+
+// Settings and conditions are the same thing: a parameter with a value. They
+// render identically. What a condition carries extra (operator, action, reason
+// code) hides behind a details disclosure, because it is rarely changed.
+function paramRow(opts) {
+  const { id, name, meaning, control, tags = '', on = null, onAction = '', details = '', open = false, warn = '' } = opts;
   return `
-  <h1 class="page-title">Fallback scorecard</h1>
-  <p class="page-desc" style="max-width:760px;">Some customers are too new to score, because the model has nothing to work with. Rather than turn them away, this scorecard gives points for whatever they <em>can</em> show, adds the points up, and treats the total as a score.</p>
-  <ol class="howto" style="max-width:760px;margin-bottom:18px;">
-    <li><strong>Points for what they have</strong>: verified ID, months on the wallet, steady income. Set each signal's worth in the table below.</li>
-    <li><strong>The total is the score</strong>, on the same 0–1000 scale as the model, so it flows through the same <span class="nav-link" data-tab="bands">Score bands</span>: but capped, because a points total is a rougher guess than a model score.</li>
-    <li><strong>How much data is enough</strong> is set by the coverage tiers. Too little, and the customer gets a small flat starting amount instead of a scored offer.</li>
-    <li><strong>Every fallback decision is labelled</strong> as rule-based, so you can always tell these apart from model-scored ones.</li>
-  </ol>
-  <div style="margin:12px 0 18px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-    <span class="readonly-value">Score scale ${state.scoreMin}–${state.scoreMax}</span>
-    <span class="inherited-tag">inherited from the shared model · signals come from <span class="nav-link" data-nav="params">Global setup → Parameters &amp; features</span></span>
-  </div>
+  <div class="prow${warn ? ' prow-warn' : ''}${on === false ? ' prow-off' : ''}">
+    <div class="prow-main">
+      ${on === null ? '' : `
+        <button class="switch${on ? ' on' : ''}" style="margin-top:0;" ${onAction}
+          role="switch" aria-checked="${on ? 'true' : 'false'}"
+          aria-label="${esc(name)} enabled"><span class="knob"></span></button>`}
+      <div class="prow-text">
+        <div class="prow-name">${esc(name)}${tags}</div>
+        <div class="prow-meaning">${meaning}</div>
+      </div>
+      <div class="prow-value">${control}</div>
+      ${details ? `
+        <button class="prow-more${open ? ' is-open' : ''}" data-action="row-details" data-row="${esc(id)}"
+          aria-expanded="${open ? 'true' : 'false'}" aria-label="More options for ${esc(name)}">${open ? 'Less' : 'More'}</button>` : ''}
+    </div>
+    ${warn ? `<div class="prow-warnline">${warn}</div>` : ''}
+    ${details && open ? `<div class="prow-details">${details}</div>` : ''}
+  </div>`;
+}
 
-  <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:16px;align-items:start;">
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="card panel">
-        <h2 class="panel-title">Points table</h2>
-        <div class="panel-sub" style="margin-bottom:10px;">A customer earns points for each signal they can demonstrate. Signals reference the shared parameter definitions.</div>
-        ${entryRows}
-        <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
-          <button class="add-rule" data-action="fb-add">+ Add signal</button>
-          <span style="margin-left:auto;font-size:12.5px;font-weight:700;color:${overScale ? '#7A5B12' : '#344054'};">
-            Max achievable: ${maxPts} points${overScale ? ` · capped to ${state.scoreMax} (score scale)` : ` · within the ${state.scoreMin}–${state.scoreMax} scale`}
+// A layer setting, as a parameter row.
+function settingRow(layerKey, d) {
+  const val = settingValue(layerKey, d.key);
+  const needs = settingNeedsValue(d, val);
+  const tags = [
+    d.essential ? '<span class="tag-essential">Credit team</span>' : '',
+    needs ? '<span class="tag-open">Needs a value</span>' : '',
+    d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}">Also set at another layer</button>` : '',
+  ].join('');
+  const entry = settingEntry(layerKey, d.key);
+  return paramRow({
+    id: `${layerKey}.${d.key}`, name: d.label, meaning: esc(d.meaning),
+    control: settingEditor(layerKey, d), tags,
+    on: entry.enabled !== false,
+    onAction: `data-action="rule-enabled" data-list="${layerKey}" data-key="${esc(d.key)}"`,
+  });
+}
+
+// A condition, as the same parameter row. The sentence is the meaning.
+function conditionRow(r, layerKey) {
+  const badParam = !paramValidIn(r.param, layerKey);
+  const badAction = !actionValidIn(r.action, layerKey);
+  const badOp = !operatorValidFor(r.op, r.param);
+  const warn = badParam
+    ? `⚠ <strong>${esc(labelOf(r.param))}</strong> is not available at ${esc(layerKey.toUpperCase())}.`
+    : badAction ? `⚠ <strong>${esc(ACTLABEL[r.action] || r.action)}</strong> is not available at ${esc(layerKey.toUpperCase())}.`
+    : badOp ? `⚠ <strong>${esc(OPLABEL[r.op] || r.op)}</strong> does not apply to this kind of value.` : '';
+
+  const paramOptions = PARAM_GROUPS.map(([g, gLabel]) => {
+    const o = paramsForSection(layerKey).filter(d => d.group === g);
+    return o.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(o.map(d => [d.key, d.label]), r.param)}</optgroup>` : '';
+  }).join('') + (badParam ? `<option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} (not available here)</option>` : '');
+
+  const details = `
+    <div class="pd-grid">
+      <label class="pd-field"><span>What to check</span>
+        <select data-change="rule-param" data-rule="${r.id}" aria-label="Parameter for rule ${esc(r.code)}">${paramOptions}</select></label>
+      <label class="pd-field"><span>Test</span>
+        <select data-change="rule-op" data-rule="${r.id}" aria-label="Test for rule ${esc(r.code)}">${optionGroup(operatorsForParam(r.param), r.op)}</select></label>
+      <label class="pd-field"><span>Then</span>
+        <select data-change="rule-action" data-rule="${r.id}" aria-label="Outcome for rule ${esc(r.code)}">${optionGroup(actionsForSection(layerKey), r.action)}${badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} (not available here)</option>` : ''}</select></label>
+      <label class="pd-field pd-wide"><span>Reason code recorded if this decides the outcome</span>
+        <select data-change="rule-rc" data-rule="${r.id}" aria-label="Reason code for rule ${esc(r.code)}">
+          <option value=""${r.rc ? '' : ' selected'}>(no code)</option>
+          ${state.reasonCodes.filter(c => c.kind === 'rule' && (c.active || c.code === r.rc))
+            .map(c => `<option value="${esc(c.code)}"${c.code === r.rc ? ' selected' : ''}>${esc(c.code)} · ${esc(c.label)}</option>`).join('')}
+        </select></label>
+    </div>
+    <div class="pd-foot">
+      <span class="rule-code">${esc(r.code)}</span>
+      <button class="btn btn-outline btn-sm" data-action="remove-rule" data-rule="${r.id}">Remove this condition</button>
+    </div>`;
+
+  return paramRow({
+    id: r.id, name: labelOf(r.param), meaning: esc(sentence(r)),
+    control: valueEditor(r), tags: '', on: r.enabled,
+    onAction: `data-action="toggle-rule" data-rule="${r.id}"`,
+    details, open: !!state.rowOpen[r.id], warn,
+  });
+}
+
+/* ---------- Score bands ---------- */
+
+
+// L5 owns which repayment periods may be offered at all. A band picks from that
+// list rather than holding a free number, so an unofferable term is impossible.
+function permittedTerms() {
+  const raw = String(settingValue('layer_5', 'permittedTenures') || '');
+  const nums = (raw.match(/\d+/g) || []).map(Number).filter(n => n > 0);
+  return [...new Set(nums)].sort((a, b) => a - b);
+}
+
+// L5's deposit floor is a minimum applied whatever the band says, so the floor
+// wins when it is higher. The band keeps its own value; this is what is offered.
+function effectiveDeposit(b) {
+  const floor = Number(settingValue('layer_5', 'depositFloorPct'));
+  if (b.deposit == null) return null;
+  return isFinite(floor) ? Math.max(b.deposit, floor) : b.deposit;
+}
+function depositFloorBinds(b) {
+  const floor = Number(settingValue('layer_5', 'depositFloorPct'));
+  return b.deposit != null && isFinite(floor) && floor > b.deposit;
+}
+
+function renderBandTable() {
+  const bands = cfg().bands;
+  const s = state;
+  const span = Math.max(1, s.scoreMax - s.scoreMin);
+  const productMax = Number(settingValue('layer_5', 'productMaximum'));
+
+  const segs = bands.map((b, i) => {
+    const next = i + 1 < bands.length ? bands[i + 1].floor : s.scoreMax;
+    const pct = ((next - b.floor) / span) * 100;
+    return `<div class="band-seg" style="width:${pct}%;background:${BAND_COLORS[i]};">
+      <div class="band-seg-label" style="color:${inkOn(BAND_COLORS[i])};">${esc(b.label)}</div>
+      <div class="band-seg-range" style="color:${inkOnMuted(BAND_COLORS[i])};">${b.floor} – ${next}</div>
+    </div>`;
+  }).join('');
+
+  const handles = bands.slice(1).map((b, idx) => {
+    const i = idx + 1;
+    return `<div class="band-handle" data-handle="${i}" style="left:${((b.floor - s.scoreMin) / span) * 100}%;"
+      role="slider" tabindex="0" aria-label="Floor of the ${esc(b.label)} band"
+      aria-valuemin="${bands[i - 1].floor + 20}" aria-valuemax="${(i + 1 < bands.length ? bands[i + 1].floor : s.scoreMax) - 20}"
+      aria-valuenow="${b.floor}">
+      <div class="band-handle-bar"></div><div class="band-handle-value">${b.floor}</div></div>`;
+  }).join('');
+
+  const stats = bandStats(activeProfile());
+  const rows = bands.map((b, i) => `
+    <div class="bands-grid band-row">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="band-dot" style="background:${BAND_COLORS[i]};"></span>
+        <span style="font-size:13.5px;font-weight:600;color:#101828;">${esc(b.label)}</span>
+      </div>
+      <div style="font-size:13px;color:#344054;font-variant-numeric:tabular-nums;">${b.floor}</div>
+      <div style="font-size:13px;color:#344054;">${esc(b.decision)}</div>
+      <div>${b.multiplier == null ? '<span style="color:#667085;">n/a</span>' : `
+        <input type="number" min="0" max="1" step="0.05" class="val-input band-input" value="${b.multiplier}"
+          data-change="band-multiplier" data-idx="${i}" aria-label="Limit multiplier for the ${esc(b.label)} band" />`}</div>
+      <div style="font-size:13px;font-weight:600;color:#101828;font-variant-numeric:tabular-nums;">${esc(bandLimitLabel(b))}</div>
+      <div>${b.maxTenure == null ? '<span style="color:#667085;">n/a</span>' : (() => {
+        const terms = permittedTerms();
+        // Until L5 says which terms may be offered there is nothing to check a
+        // band against, so an unset list is treated as "not constrained yet"
+        // rather than as every band being wrong.
+        const ok = !terms.length || terms.includes(Number(b.maxTenure));
+        return `<select class="band-input${ok ? '' : ' field-invalid'}" data-change="band-tenure" data-idx="${i}"
+          aria-label="Maximum loan term for the ${esc(b.label)} band, chosen from the terms permitted at L5">
+          ${terms.map(t => `<option value="${t}"${Number(b.maxTenure) === t ? ' selected' : ''}>${t} mo</option>`).join('')}
+          ${terms.includes(Number(b.maxTenure)) ? '' : `<option value="${esc(b.maxTenure)}" selected>${esc(b.maxTenure)} mo${terms.length ? ' (not permitted)' : ''}</option>`}
+        </select>`;
+      })()}</div>
+      <div>${b.deposit == null ? '<span style="color:#667085;">n/a</span>' : `
+        <span class="dep-cell">
+          <input type="number" min="0" max="100" step="5" class="val-input band-input" value="${b.deposit}"
+            data-change="band-deposit" data-idx="${i}" aria-label="Deposit percentage for the ${esc(b.label)} band" />
+          ${depositFloorBinds(b) ? `<span class="dep-floor" title="The L5 deposit floor is higher than this band's own figure, so the floor is what is offered">floor ${effectiveDeposit(b)}%</span>` : ''}
+        </span>`}</div>
+      <div style="font-size:13px;color:#344054;font-variant-numeric:tabular-nums;">${stats[i].badRate == null ? 'n/a' : stats[i].badRate + '%'}</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="pop-track"><div class="pop-fill" style="width:${stats[i].pop * 2.6}%;background:${BAND_COLORS[i]};"></div></div>
+        <span style="font-size:12px;color:#667085;font-variant-numeric:tabular-nums;width:38px;text-align:right;">${stats[i].pop}%</span>
+      </div>
+    </div>`).join('');
+
+  return `
+  <h3 class="panel-title" style="margin-top:6px;">Score bands</h3>
+  <div class="panel-sub" style="margin-bottom:10px;">Each band carries a decision and terms that tighten as risk rises. The limit is a multiplier of the product maximum${isFinite(productMax) && productMax ? ` of $${productMax}` : ''}, set in <span class="nav-link" data-layer="l5">L5</span>, so changing that figure rescales every band at once.</div>
+  <div class="bands-toolbar">
+    <label>Model score range</label>
+    <span class="readonly-value">${s.scoreMin} to ${s.scoreMax}</span>
+    <span class="inherited-tag">inherited from the shared model · <span class="nav-link" data-nav="model">edit in Global setup</span></span>
+    <div class="drag-hint">${s.dragging != null ? 'Release to set the band floor' : 'Drag the markers to move a band floor'}</div>
+  </div>
+  <div class="ruler" id="ruler">
+    <div class="ruler-track">${segs}</div>
+    ${handles}
+    <div class="ruler-min">${s.scoreMin}</div>
+    <div class="ruler-max">${s.scoreMax}</div>
+  </div>
+  <div class="bands-table">
+    <div class="bands-grid grid-head">
+      <div>Band</div><div>Score floor</div><div>Decision</div><div>Multiplier</div><div>Limit</div>
+      <div>Max tenure</div><div>Deposit</div><div>Bad rate</div><div>Population</div>
+    </div>
+    ${rows}
+  </div>
+  <div style="margin-top:10px;font-size:11.5px;color:#667085;">Bad rate is measured by the shared model; use it to justify where each band floor sits. Limit is the multiplier applied to the product maximum, rounded by the L5 rounding rule. Loan terms are chosen from the terms permitted at <span class="nav-link" data-layer="l5">L5</span>, and the L5 deposit floor overrides a band deposit that sits below it.</div>`;
+}
+
+
+
+/* ---------- L0: the three paths, each with its own configuration ---------- */
+
+function draftRef(ref) {
+  return ref ? `<span class="draft-ref" title="Section of the Technodysis rule engine draft">draft ${esc(ref)}</span>` : '';
+}
+
+function pathPanel(layer) {
+  const c = cfg();
+  const thin = layer.thinFile || [];
+  const csOn = c.coldStart.gates.length;
+  const fbOn = c.fallback.entries.filter(e => e.enabled).length;
+  const t = c.fallback.tiers;
+
+  const paths = [
+    {
+      key: 'scored', label: 'Scored', ref: '§2',
+      lead: 'Enough data to use the model. Continues to L1, then scored normally at L3.',
+      summary: `${(layer.settings || []).length} thresholds`,
+      body: () => `
+        <p class="path-note">These thresholds decide whether the model score can be trusted at all. Fail any and the customer drops to one of the paths below.</p>
+        ${(layer.settings || []).map(d => settingRow(layer.key, d)).join('')}`,
+    },
+    {
+      key: 'thin', label: 'Thin file', ref: '§5.1',
+      lead: 'Some data, but not enough to score reliably. Scored on points instead, and capped.',
+      summary: `${fbOn} signals · ladder to $${settingValue(layer.key, 'ladderCeiling') || '0'}`,
+      body: () => `
+        <p class="path-note">The engine does not guess. It awards points for whatever the customer can show, treats the total as a score on the same scale, and raises the limit only as they demonstrate repayment.</p>
+        ${renderFallback('points')}
+        ${renderFallback('coverage')}
+        <h4 class="path-sub">The ladder ${draftRef('§5.1')}</h4>
+        ${thin.map(d => settingRow(layer.key, d)).join('')}`,
+    },
+    {
+      key: 'insufficient', label: 'Insufficient data', ref: 'Ecocash extension',
+      lead: 'Too little data to score at all. A short, cautious path so no customer is permanently locked out.',
+      summary: `${csOn} light gates · defer ${c.coldStart.defer.retryDays} days`,
+      body: () => renderFallback('cold'),
+    },
+  ];
+
+  return `
+  <div class="paths">
+    <div class="paths-head">
+      <h3 class="panel-title">Which path does this customer take?</h3>
+      <div class="panel-sub">Exactly one of the three. Everything each path does is configured inside it.</div>
+    </div>
+    ${paths.map(p => {
+      const open = !!state.pathOpen[p.key];
+      return `
+      <div class="path path-${p.key}${open ? ' is-open' : ''}">
+        <button class="path-head" data-action="toggle-path" data-path="${p.key}" aria-expanded="${open ? 'true' : 'false'}">
+          <span class="path-dot"></span>
+          <span class="path-text">
+            <span class="path-label">${esc(p.label)} ${draftRef(p.ref)}</span>
+            <span class="path-lead">${esc(p.lead)}</span>
           </span>
-        </div>
-      </div>
+          <span class="path-summary">${esc(p.summary)}</span>
+          <span class="path-chev" aria-hidden="true">${open ? '▲' : '▼'}</span>
+        </button>
+        ${open ? `<div class="path-body">${p.body()}</div>` : ''}
+      </div>`;
+    }).join('')}
+  </div>
+  ${renderFallback('preview')}`;
+}
 
-      <div class="explainer-note">Fallback scores flow through the same <span class="nav-link" data-tab="bands">Score bands</span>, but capped at the thin-file ceiling. Income, when available, drives the affordability ceiling as configured in <span class="nav-link" data-tab="limits">Limits &amp; affordability</span>; when income is unknown, the zero-file minimum applies.</div>
+/* ---------- Waterfall screen ---------- */
+
+function layerRuleRows(layerKey) {
+  const c = cfg();
+  const rules = c.rules.filter(r => r.section === layerKey);
+  if (!rules.length) return '';
+  return `
+  <h3 class="panel-title" style="margin-top:18px;">Conditions</h3>
+  <div class="panel-sub" style="margin-bottom:6px;">Each reads as a sentence. Parameters come from <span class="nav-link" data-nav="params">Global setup</span>; only those valid in ${esc(layerKey.toUpperCase())} are offered.</div>
+  ${rules.map(r => conditionRow(r, layerKey)).join('')}
+  <div class="add-rule-wrap" style="padding-left:0;">
+    <button class="add-rule" data-action="add-rule" data-section="${layerKey}">+ Add condition to ${esc(layerKey.toUpperCase())}</button>
+  </div>`;
+}
+
+function layerCard(layer, i) {
+  const c = cfg();
+  const open = !!c.open[layer.key];
+  const rules = c.rules.filter(r => r.section === layer.key);
+  const enabled = rules.filter(r => r.enabled).length;
+  const defs = layerSettingDefs(layer);
+  const openCount = defs.filter(d => settingNeedsValue(d, settingValue(layer.key, d.key))).length;
+  const showAll = !!state.layerShowAll[layer.key];
+  // Essentials, anything still unset, and anything flagged as overlapping
+  // another layer stay visible; the rest hide behind "show all".
+  const visible = showAll ? defs : defs.filter(d =>
+    d.essential || d.overlap || settingNeedsValue(d, settingValue(layer.key, d.key)));
+  const hidden = defs.length - visible.length;
+
+  // A disabled rule is never evaluated and never appears as a reason for a
+  // decision (§6.12), so the count of what is actually live is worth showing.
+  const live = defs.filter(d => settingEntry(layer.key, d.key).enabled !== false).length;
+  const summary = [
+    defs.length ? `${live} of ${defs.length} rule${defs.length === 1 ? '' : 's'} on` : '',
+    layer.profile ? 'product profile' : '',
+  ].filter(Boolean).join(' · ');
+
+  const core = layer.settings || [];
+  const thin = layer.thinFile || [];
+  const visibleIn = list => list.filter(d => visible.includes(d));
+
+  const body = !open ? '' : `
+  <div class="layer-body">
+    <p class="layer-intro">${esc(layer.intro)}</p>
+
+    ${defs.length && layer.key !== 'l0' ? `
+      <div class="layer-settings-head">
+        <h3 class="panel-title">Settings</h3>
+        ${hidden > 0 || showAll ? `<button class="btn btn-outline btn-sm" data-action="layer-showall" data-list="${layer.key}">${showAll ? 'Show essentials only' : `Show all ${defs.length}`}</button>` : ''}
+      </div>
+      ${visibleIn(core).map(d => settingRow(layer.key, d)).join('')}
+      ${hidden > 0 && !showAll ? `<div class="layer-hidden-note">${hidden} more setting${hidden === 1 ? '' : 's'} hidden. These carry a working default and are rarely changed.</div>` : ''}
+    ` : ''}
+
+    ${layer.key === 'l0' ? pathPanel(layer) : ''}
+    ${layer.key === 'l3' ? renderBandTable() : ''}
+
+    ${false && thin.length && visibleIn(thin).length ? `
+      <h3 class="panel-title" style="margin-top:18px;">Thin-file ladder</h3>
+      <div class="panel-sub" style="margin-bottom:6px;">Where there is too little data to score reliably the engine does not guess. It offers a small, short, cautious amount and raises the limit as the customer demonstrates repayment. Every completed cycle produces exactly the repayment data the model needs.</div>
+      ${visibleIn(thin).map(d => settingRow(layer.key, d)).join('')}
+      <div class="explainer-note" style="margin-top:12px;">The cold-start policy for a customer with <em>no</em> data at all, including the light entry gates and the never-a-permanent-decline rule, is configured on <span class="nav-link" data-tab="waterfall" data-layer="l0">L0</span> routing and the <span class="nav-link" data-action="open-coldstart">cold-start policy</span>.</div>
+    ` : ''}
+
+    ${layer.key === 'l5' ? `
+      <div class="limit-formula">
+        <div class="lf-title">final limit = MINIMUM of</div>
+        <div class="lf-terms">${LIMIT_FORMULA.map(t => `<span class="lf-term">${esc(t)}</span>`).join('<span class="lf-comma">,</span>')}</div>
+        <div class="lf-note">Limits only ever go down. L3 produces the indicative offer; L4, L5 and L6 can each reduce it and none can raise it.</div>
+      </div>` : ''}
+
+    ${layerRuleRows(layer.key)}
+  </div>`;
+
+  return `
+  <div class="card section-card layer-card" data-layer="${layer.key}">
+    <div class="section-head" data-action="toggle-section" data-section="${layer.key}"
+      role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}"
+      aria-label="${esc(layer.num)}, ${esc(layer.title)}. ${esc(summary)}. ${openCount ? openCount + ' need a value. ' : ''}${open ? 'Collapse' : 'Expand'}."
+      style="border-bottom:${open ? '1px solid #E4E7EC' : 'none'};">
+      <div class="section-num layer-num">${esc(layer.num)}</div>
+      <div style="min-width:0;">
+        <h2 class="section-title">${esc(layer.title)} ${draftRef(layer.ref)}</h2>
+        <div class="section-desc">${esc(layer.question)}</div>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+        ${openCount ? `<span class="chip tag-open">${openCount} need a value</span>` : ''}
+        ${layer.canStop ? '<span class="chip chip-stop" title="This layer can end the assessment">Can stop</span>' : ''}
+        <span class="section-count">${esc(summary)}</span>
+        <span class="section-chevron" aria-hidden="true">${open ? '▲' : '▼'}</span>
+      </div>
     </div>
+    ${body}
+  </div>`;
+}
 
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="card panel">
-        <h2 class="panel-title">Coverage tiers</h2>
-        <div class="panel-sub" style="margin-bottom:6px;">How much data is enough to trust the scorecard.</div>
-        ${tierRow('Full fallback', 'Enough signals present: score normally, capped at the thin-file ceiling.', numInput('fullMin', t.fullMin, 'at least&nbsp;signals:'))}
-        ${tierRow('Partial coverage', 'Fewer signals: offer capped at 50% of the thin-file ceiling ($' + (Number(t.thinCeiling) / 2) + ').', numInput('partialMin', t.partialMin, 'at least&nbsp;signals:'))}
-        ${tierRow('Zero-file', 'Too little data, in particular no inferable income. Skip scoring, assign a flat cold-start minimum.', numInput('zeroMin', t.zeroMin, '$'))}
-        ${tierRow('Thin-file ceiling', 'Hard cap on any fallback-scored offer.', numInput('thinCeiling', t.thinCeiling, '$'))}
-      </div>
+function renderWaterfall() {
+  const openParams = openParameters();
+  const allOpen = LAYER_KEYS.every(k => cfg().open[k]);
 
+  const overlapPanel = state.overlapTag ? (() => {
+    const g = OVERLAP_GROUPS.find(x => x.tag === state.overlapTag);
+    const rows = tenureOverlapRows();
+    return `
+    <div class="overlap-panel">
+      <div class="overlap-head"><strong>${esc(g.label)}</strong>
+        <button class="rule-remove" data-action="hide-overlap" aria-label="Dismiss">×</button></div>
+      <div class="overlap-note">${esc(g.note)}</div>
+      <table class="overlap-table"><tbody>
+        ${rows.map(r => `<tr><td>${esc(r.where)}</td><td>${esc(r.what)}</td><td><strong>${esc(r.value)}</strong></td></tr>`).join('')}
+      </tbody></table>
+    </div>`;
+  })() : '';
+
+  return `
+  <div class="page-head" style="margin-bottom:14px;">
+    <div>
+      <h1 class="page-title">Decision waterfall</h1>
+      <p class="page-desc" style="max-width:820px;">Every parameter the engine uses, in the order it evaluates them. A customer runs from L0 down, and the first layer that decides, decides.</p>
+    </div>
+    <div class="page-head-actions">
+      ${openParams.length
+        ? `<button class="btn btn-outline btn-open-filter${state.showOpenOnly ? ' is-on' : ''}" data-action="toggle-open-only">${state.showOpenOnly ? 'Showing' : 'Show'} ${openParams.length} needing a value</button>`
+        : `<span class="chip" style="background:#ECFDF3;color:#067647;border:1px solid #ABEFC6;">All parameters set</span>`}
+      <button class="btn btn-outline" style="padding:8px 14px;font-size:12.5px;" data-action="expand-all">${allOpen ? 'Collapse all' : 'Expand all'}</button>
     </div>
   </div>
 
-  ${coldStartSection}
+  <div class="invariants">
+    ${ENGINE_INVARIANTS.map(([t, d]) => `
+      <div class="invariant"><div class="inv-title">${esc(t)}</div><div class="inv-note">${esc(d)}</div></div>`).join('')}
+  </div>
 
-  ${previewPanel}`;
+  ${overlapPanel}
+
+  ${state.showOpenOnly ? `
+    <div class="card panel" style="margin-bottom:14px;">
+      <h2 class="panel-title">Still needs a value from the credit team</h2>
+      <div class="panel-sub" style="margin-bottom:10px;">Publication is blocked until these are set. Several depend on the score distribution, which follows model training.</div>
+      ${openParams.map(({ layer, def }) => `
+        <div class="field-row">
+          <div style="flex:1;min-width:0;">
+            <div class="field-label"><span class="open-layer">${esc(layer.num)}</span> ${esc(def.label)}
+              ${def.essential ? '<span class="tag-essential">Credit team</span>' : ''}</div>
+            <div class="field-hint">${esc(def.meaning)}</div>
+          </div>
+          ${settingEditor(layer.key, def)}
+        </div>`).join('')}
+    </div>` : ''}
+
+  ${LAYERS.map(layerCard).join('')}`;
 }
 
 /* ---------- Setup progress ---------- */
@@ -1808,39 +2944,24 @@ function stepState(key) {
   const c = cfg();
   const p = activeProfile();
   switch (key) {
-    case 'rules': {
-      if (!c.rules.length) return { state: 'todo', note: 'No rules yet' };
+    case 'waterfall': {
+      const open = openParameters().length;
+      const rules = c.rules.length;
       const invalid = c.rules.filter(r => !paramValidIn(r.param, r.section) || !actionValidIn(r.action, r.section)).length;
-      const enabled = c.rules.filter(r => r.enabled).length;
-      if (!enabled) return { state: 'partial', note: 'No rule is switched on' };
-      if (invalid) return { state: 'partial', note: `${invalid} rule${invalid === 1 ? '' : 's'} need attention` };
-      return { state: 'done', note: `${enabled} active` };
+      if (!rules && open) return { state: 'todo', note: 'Nothing configured yet' };
+      if (open) return { state: 'partial', note: `${open} need a value` };
+      if (invalid) return { state: 'partial', note: `${invalid} condition${invalid === 1 ? '' : 's'} need attention` };
+      return { state: 'done', note: 'All parameters set' };
     }
-    case 'bands': {
-      const unset = c.bands.filter(b => b.decision === 'Not configured').length;
-      if (unset === c.bands.length) return { state: 'todo', note: 'No decisions set' };
-      if (unset) return { state: 'partial', note: `${unset} band${unset === 1 ? '' : 's'} unset` };
-      return { state: 'done', note: `${c.bands.length} bands` };
-    }
-    case 'fallback': {
-      const on = c.fallback.entries.filter(e => e.enabled).length;
-      if (!on) return { state: 'todo', note: 'No signals switched on' };
-      if (!Number(c.fallback.tiers.thinCeiling)) return { state: 'partial', note: 'No thin-file ceiling' };
-      return { state: 'done', note: `${on} signals` };
-    }
-    case 'limits': {
-      const lim = syncMatrix(c);
-      const caps = lim.caps;
-      const zero = caps.filter(f => !Number(f.value)).length;
-      const blanks = lim.matrix.flat().filter(v => !v || v === 'n/a').length;
-      if (zero === caps.length) return { state: 'todo', note: 'No caps set' };
-      if (zero || blanks) return { state: 'partial', note: zero ? `${zero} cap${zero === 1 ? '' : 's'} unset` : 'Matrix incomplete' };
-      return { state: 'done', note: 'Caps & matrix set' };
+    // Assessing is a check rather than a setting, so this step is complete once
+    // an applicant has actually been run and the note carries what it concluded.
+    case 'assess': {
+      if (!c.touched.assess) return { state: 'todo', note: 'No customer assessed yet' };
+      const r = assess();
+      return { state: 'done', note: `${r.outcome.label} at ${r.outcome.at}` };
     }
     case 'simulate':
-      return c.touched.simulate
-        ? { state: 'done', note: 'Simulation run' }
-        : { state: 'todo', note: 'Not run yet' };
+      return c.touched.simulate ? { state: 'done', note: 'Simulation run' } : { state: 'todo', note: 'Not run yet' };
     case 'publish': {
       if (p.status === 'Published' || p.status === 'Live') return { state: 'done', note: 'Live' };
       const blockers = publishBlockers();
@@ -1893,10 +3014,8 @@ function renderStepFooter() {
 /* ---------- Profile workspace ---------- */
 
 const TAB_RENDERERS = {
-  rules: () => renderRules(),
-  bands: () => renderBands(),
-  fallback: () => renderFallback(),
-  limits: () => renderLimits(),
+  waterfall: () => renderWaterfall(),
+  assess: () => renderAssess(),
   simulate: () => renderSimulate(),
   versions: () => renderVersions(),
 };
@@ -2514,6 +3633,7 @@ function openProfile(idx, mode, tab) {
     state.showBanner = !state.bannerSeen[state.profileIdx];
     state.bannerSeen[state.profileIdx] = true;
   }
+  if (state.profileTab === 'assess') cfg().touched.assess = true;
   render();
 }
 
@@ -2528,6 +3648,7 @@ function announceStep(key) {
 
 function goToTab(key) {
   state.profileTab = key;
+  if (key === 'assess') cfg().touched.assess = true;
   state.confirmRemove = null;
   state.setupNag = false;
   render();
@@ -2541,7 +3662,7 @@ function goToTab(key) {
 // matches several elements and focus lands on the wrong one, or on a disabled one.
 const FOCUS_KEYS = ['change', 'action', 'input', 'nav', 'tab', 'step', 'section',
   'rule', 'entry', 'gate', 'key', 'code', 'param', 'list', 'field', 'col', 'row',
-  'val', 'type', 'idx', 'handle'];
+  'val', 'type', 'idx', 'handle', 'layer', 'path'];
 
 function focusSignature(el) {
   if (!el || el === document.body || !$view.contains(el)) return null;
@@ -2583,6 +3704,17 @@ document.addEventListener('click', (e) => {
   // Delegation reads e.target.closest; a non-Element target (a synthetic event
   // dispatched on document) would otherwise throw.
   if (!(e.target instanceof Element)) return;
+  const layerLink = e.target.closest('[data-layer]:not(.layer-card):not([data-action])');
+  if (layerLink && layerLink.dataset.layer && !layerLink.closest('.layer-card > .section-head')) {
+    const k = layerLink.dataset.layer;
+    if (LAYER_KEYS.includes(k)) {
+      cfg().open[k] = true; state.profileTab = 'waterfall'; render();
+      const card = $view.querySelector(`.layer-card[data-layer="${k}"]`);
+      if (card) card.scrollIntoView({ block: 'start' });
+      return;
+    }
+  }
+
   const navBtn = e.target.closest('[data-nav]');
   if (navBtn) {
     const key = navBtn.dataset.nav;
@@ -2640,8 +3772,8 @@ document.addEventListener('click', (e) => {
       render(); break;
     }
     case 'expand-all': {
-      const all = Object.values(cfg().open).every(Boolean);
-      SECTIONS.forEach(([k]) => { cfg().open[k] = !all; });
+      const all = LAYER_KEYS.every(k => cfg().open[k]);
+      LAYER_KEYS.forEach(k => { cfg().open[k] = !all; });
       render(); break;
     }
     case 'toggle-rule': {
@@ -2687,6 +3819,32 @@ document.addEventListener('click', (e) => {
     case 'fb-remove':
       cfg().fallback.entries = cfg().fallback.entries.filter(x => x.id !== el.dataset.entry);
       markDirty(); render(); break;
+    case 'layer-toggle': {
+      const store = cfg().layers[el.dataset.list] || (cfg().layers[el.dataset.list] = {});
+      store[el.dataset.key] = !store[el.dataset.key];
+      markDirty(); render(); break;
+    }
+    case 'toggle-path':
+      state.pathOpen[el.dataset.path] = !state.pathOpen[el.dataset.path];
+      render(); break;
+    case 'row-details':
+      state.rowOpen[el.dataset.row] = !state.rowOpen[el.dataset.row];
+      render(); break;
+    case 'layer-showall':
+      state.layerShowAll[el.dataset.list] = !state.layerShowAll[el.dataset.list];
+      render(); break;
+    case 'toggle-open-only':
+      state.showOpenOnly = !state.showOpenOnly;
+      announce(state.showOpenOnly
+        ? `Showing the ${openParameters().length} parameters still needing a value.`
+        : 'Showing every layer.');
+      render(); break;
+    case 'show-overlap':
+      state.overlapTag = el.dataset.tag; render(); break;
+    case 'hide-overlap':
+      state.overlapTag = null; render(); break;
+    case 'open-coldstart':
+      cfg().open.l0 = true; state.profileTab = 'waterfall'; render(); break;
     case 'fb-add':
       cfg().fallback.entries.push({ id: 'fn' + Date.now(), param: 'tenure', op: 'gte', value: '6 months', points: 50, note: '', enabled: true });
       markDirty(); render(); break;
@@ -2728,8 +3886,41 @@ document.addEventListener('click', (e) => {
       state.profileTab = 'rules';
       announce('Opened the Credit ladder section in Rules.');
       render(); break;
-    case 'di-sample':
-      state.diSample = Number(el.dataset.idx); render(); break;
+    case 'rule-enabled': {
+      const entry = settingEntry(el.dataset.list, el.dataset.key);
+      entry.enabled = entry.enabled === false;
+      announce(entry.enabled
+        ? `${el.dataset.key.replace(/_/g, ' ')} switched on.`
+        : `${el.dataset.key.replace(/_/g, ' ')} switched off. A disabled rule is never evaluated and never appears as a reason.`);
+      markDirty(); render(); break;
+    }
+    case 'rule-flag': {
+      const entry = settingEntry(el.dataset.list, el.dataset.key);
+      const f = el.dataset.field;
+      entry.value[f] = !entry.value[f];
+      markDirty(); render(); break;
+    }
+
+    /* ---------- Assess a customer ---------- */
+    case 'assess-layer':
+      state.assessOpen[el.dataset.layer] = !state.assessOpen[el.dataset.layer];
+      render(); break;
+    case 'app-preset': {
+      state.presetIdx = Number(el.dataset.idx);
+      state.applicant = { ...APPLICANT_BASE, ...APPLICANT_PRESETS[state.presetIdx].values };
+      cfg().touched.assess = true;
+      const r = assess();
+      announce(`${APPLICANT_PRESETS[state.presetIdx].name} loaded. ${r.outcome.label} at ${r.outcome.at}.`);
+      render(); break;
+    }
+    case 'app-reset':
+      state.applicant = { ...APPLICANT_BASE, ...APPLICANT_PRESETS[state.presetIdx].values };
+      announce(`Applicant reset to ${APPLICANT_PRESETS[state.presetIdx].name}.`);
+      render(); break;
+    case 'app-toggle':
+      applicantState()[el.dataset.field] = !applicantState()[el.dataset.field];
+      cfg().touched.assess = true;
+      render(); break;
     case 'setup-step': {
       const step = el.dataset.step;
       if (step === 'publish') {
@@ -2847,8 +4038,9 @@ document.addEventListener('click', (e) => {
           open: { ...DEFAULT_OPEN },
           fallback: makeFallback('n' + Date.now(), true),
           coldStart: makeColdStart('n' + Date.now(), COLDSTART_BLANK),
+          layers: structuredClone(LAYER_SEEDS.blank),
           limits: structuredClone(LIMITS_EMPTY),
-          touched: { simulate: false },
+          touched: { simulate: false, assess: false },
         },
       });
       state.createOpen = false;
@@ -2925,8 +4117,30 @@ document.addEventListener('change', (e) => {
       render(); break;
     }
     case 'val-cat': setRule(el.dataset.rule, 'value', el.value); break;
+    // One field of a rule's value object.
+    case 'rule-field': {
+      const entry = settingEntry(el.dataset.list, el.dataset.key);
+      const f = el.dataset.field;
+      const raw = String(el.value ?? '').trim();
+      if (el.dataset.array) {
+        entry.value[f] = raw ? raw.split(',').map(x => Number(x.trim())).filter(n => isFinite(n)) : [];
+      } else if (el.type === 'number') {
+        entry.value[f] = raw === '' ? null : Number(raw);
+      } else {
+        entry.value[f] = raw;
+      }
+      markDirty(); render(); break;
+    }
     case 'sim-pop':
       state.simPopIdx = Number(el.value) || 0; render(); break;
+    // An applicant field. Blank is kept blank: it means "not known about this
+    // customer", which the trace reports rather than reading as zero.
+    case 'app-field': {
+      const raw = String(el.value ?? '').trim();
+      applicantState()[el.dataset.field] = raw;
+      cfg().touched.assess = true;
+      render(); break;
+    }
     case 'lim-field': {
       const list = cfg().limits[el.dataset.list];
       const f = list && list.find(x => x.key === el.dataset.key);
@@ -2982,6 +4196,25 @@ document.addEventListener('change', (e) => {
     case 'fb-check':
       fbPreviewState().checks[el.dataset.entry] = el.checked;
       render(); break;
+    case 'layer-setting': {
+      const store = cfg().layers[el.dataset.list] || (cfg().layers[el.dataset.list] = {});
+      const def = layerSettingDefs(LAYERS.find(l => l.key === el.dataset.list) || {})
+        .find(d => d.key === el.dataset.key);
+      const numeric = def && ['percent', 'currency', 'days', 'months', 'count', 'ratio'].includes(def.type);
+      // A cleared numeric stays cleared here: an unset parameter is meaningful.
+      store[el.dataset.key] = numeric && el.value.trim() !== '' ? cleanNum(el, store[el.dataset.key]) : el.value;
+      markDirty(); render(); break;
+    }
+    case 'band-multiplier': case 'band-tenure': case 'band-deposit': {
+      const b = cfg().bands[Number(el.dataset.idx)];
+      if (b) {
+        const f = { 'band-multiplier': 'multiplier', 'band-tenure': 'maxTenure', 'band-deposit': 'deposit' }[kind];
+        const v = Number(el.value);
+        if (isFinite(v) && v >= 0) b[f] = f === 'multiplier' ? Math.min(1, v) : v;
+        markDirty();
+      }
+      render(); break;
+    }
     case 'fb-income':
       fbPreviewState().income = el.value.trim();
       render(); break;
