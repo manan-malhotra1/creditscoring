@@ -20,7 +20,7 @@ function makeFallback(prefix, blank) {
 }
 
 function makeProfile(seed, idx) {
-  return {
+  const p = {
     name: seed.name,
     blurb: seed.blurb,
     market: seed.market,
@@ -36,11 +36,10 @@ function makeProfile(seed, idx) {
     // the numbers while the seeded figures still read back exactly at the
     // seeded floors.
     liveBands: structuredClone(seed.bands),
-    liveRules: seed.rules.map((r, j) => ({ id: `p${idx}r${j}`, section: r[0], param: r[1], op: r[2], value: r[3], value2: r[8] || '', action: r[4], enabled: r[5], code: r[6], rc: r[7] || '' })),
+    liveRules: {},   // filled below, once config.layers exists
     liveLimits: structuredClone(seed.limits),
-    // Everything a profile owns: its rules, bands, limits and section-collapse state.
+    // Everything a profile owns: its layer values, bands, limits and collapse state.
     config: {
-      rules: seed.rules.map((r, j) => ({ id: `p${idx}r${j}`, section: r[0], param: r[1], op: r[2], value: r[3], value2: r[8] || '', action: r[4], enabled: r[5], code: r[6], rc: r[7] || '' })),
       bands: structuredClone(seed.bands),
       open: { ...DEFAULT_OPEN },
       fallback: makeFallback(`p${idx}`, seed.blank),
@@ -50,6 +49,10 @@ function makeProfile(seed, idx) {
       touched: { simulate: false, assess: false, ...(seed.touched || {}) },
     },
   };
+  // The published baseline starts equal to the draft, so an untouched profile
+  // reports no changes rather than reporting every rule as edited.
+  p.liveRules = snapshotRules(p);
+  return p;
 }
 
 const state = {
@@ -380,11 +383,27 @@ function markDirty() {
   state.saved = false;
 }
 
-function setRule(id, key, v) {
-  const r = cfg().rules.find(r => r.id === id);
-  if (r) r[key] = v;
-  markDirty();
-  render();
+// Every rule in a profile, across every layer. The engine's frame is the whole
+// rule set, so this is what "the rules" means: there is no second list.
+function allRules(profile) {
+  const p = profile || activeProfile();
+  const out = [];
+  LAYERS.forEach(l => (l.settings || []).forEach(d => {
+    const e = ((p.config.layers || {})[l.key] || {})[d.key];
+    out.push({ layer: l, key: d.key, def: d, entry: e || { value: {}, enabled: true } });
+  }));
+  return out;
+}
+// What is published, as a map of rule signatures, so a draft can be compared
+// against it without keeping a second copy of every value.
+function snapshotRules(profile) {
+  const out = {};
+  allRules(profile).forEach(r => { out[`${r.layer.key}.${r.key}`] = ruleSignature(r); });
+  return out;
+}
+// A rule's signature, for comparing a draft against what is published.
+function ruleSignature(r) {
+  return `${r.layer.key}.${r.key}|${r.entry.enabled !== false}|${JSON.stringify(r.entry.value)}`;
 }
 
 /* ---------- Sidebar nav ---------- */
@@ -828,24 +847,20 @@ function simResults() {
 
 /* ---------- Draft vs. published baseline (shared by sim and publish) ---------- */
 
-function ruleSig(r) {
-  return [r.section, r.param, r.op, r.value, r.value2 || '', r.action, r.enabled, r.code, r.rc].join('|');
-}
 
 // One delta, quoted identically by the What-if screen and the publish modal.
 function draftDelta() {
   const p = activeProfile();
-  const live = p.liveRules || [];
-  const draft = p.config.rules;
-  const liveById = new Map(live.map(r => [r.id, r]));
-  const draftById = new Map(draft.map(r => [r.id, r]));
+  // Rules cannot be added or removed: configuration can enable, disable and set
+  // any parameter designed into a layer, but cannot introduce one that was not
+  // (Technical Solutioning v2.1 §6.12). So every difference is an edit.
+  const live = p.liveRules || {};
   let added = 0, removed = 0, edited = 0;
-  draft.forEach(r => {
-    const was = liveById.get(r.id);
-    if (!was) added++;
-    else if (ruleSig(was) !== ruleSig(r)) edited++;
+  allRules(p).forEach(r => {
+    const was = live[`${r.layer.key}.${r.key}`];
+    if (was === undefined) return;
+    if (was !== ruleSignature(r)) edited++;
   });
-  live.forEach(r => { if (!draftById.has(r.id)) removed++; });
 
   const floorsMoved = p.config.bands.filter((b, i) => p.liveBands[i] && p.liveBands[i].floor !== b.floor).length;
   const bandsAdded = Math.max(0, p.config.bands.length - p.liveBands.length);
@@ -944,9 +959,10 @@ function renderSimulate() {
       });
     }
   });
-  const enabled = p.config.rules.filter(x => x.enabled).length;
+  const every = allRules(p);
+  const enabled = every.filter(x => x.entry.enabled !== false).length;
   drivers.push({
-    title: `${enabled} of ${p.config.rules.length} rules switched on`,
+    title: `${enabled} of ${every.length} rules switched on`,
     detail: 'Rules cap and decline on top of the band table; they can lower a limit or decline, but never raise a limit above what the band allows.',
   });
   const fbOn = p.config.fallback.entries.filter(e => e.enabled).length;
@@ -2468,17 +2484,21 @@ function overlapPeers(tag) {
   }));
   return peers;
 }
-// The draft also gates account age through L1 and L2 rules, not just settings.
-function tenureOverlapRows() {
-  const rows = overlapPeers('tenure').map(p => ({
-    where: `${p.layer.num} setting`, what: p.def.label, value: p.value ? `${p.value} days` : 'not set',
-  }));
-  cfg().rules.filter(r => ['tenure', 'sim'].includes(r.param) && ['l1', 'l2'].includes(r.section))
-    .forEach(r => rows.push({
-      where: `${(LAYERS.find(l => l.key === r.section) || {}).num} rule ${r.code}`,
-      what: labelOf(r.param), value: r.value,
-    }));
-  return rows;
+// The same customer attribute read in more than one layer, side by side, so
+// the credit team can see every place it is gated before changing one.
+function overlapRows(tag) {
+  return overlapPeers(tag).map(p => {
+    const v = p.value || {};
+    const parts = editableFields(v)
+      .filter(f => v[f] !== null && v[f] !== undefined && v[f] !== '')
+      .map(f => `${(VALUE_LABEL[f] || f).toLowerCase()} ${Array.isArray(v[f]) ? v[f].join(', ') : v[f]}`);
+    return {
+      where: `${p.layer.num} ${p.layer.title}`,
+      what: p.def.label,
+      value: parts.length ? parts.join(', ') : (Array.isArray(v.rows) ? `${v.rows.length} steps` : 'not set'),
+      off: settingEntry(p.layer.key, p.def.key).enabled === false,
+    };
+  });
 }
 
 function fieldControl(layerKey, key, field, val, label) {
@@ -2673,7 +2693,8 @@ function settingRow(layerKey, d) {
   const tags = [
     d.essential ? '<span class="tag-essential">Credit team</span>' : '',
     needs ? '<span class="tag-open">Needs a value</span>' : '',
-    d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}">Also set at another layer</button>` : '',
+    d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}"
+      data-list="${layerKey}" data-key="${esc(d.key)}">Also read at another layer</button>` : '',
   ].join('');
   const entry = settingEntry(layerKey, d.key);
   const table = ruleTable(layerKey, d);
@@ -2686,54 +2707,6 @@ function settingRow(layerKey, d) {
   });
 }
 
-// A condition, as the same parameter row. The sentence is the meaning.
-function conditionRow(r, layerKey) {
-  const badParam = !paramValidIn(r.param, layerKey);
-  const badAction = !actionValidIn(r.action, layerKey);
-  const badOp = !operatorValidFor(r.op, r.param);
-  const warn = badParam
-    ? `⚠ <strong>${esc(labelOf(r.param))}</strong> is not available at ${esc(layerKey.toUpperCase())}.`
-    : badAction ? `⚠ <strong>${esc(ACTLABEL[r.action] || r.action)}</strong> is not available at ${esc(layerKey.toUpperCase())}.`
-    : badOp ? `⚠ <strong>${esc(OPLABEL[r.op] || r.op)}</strong> does not apply to this kind of value.` : '';
-
-  const paramOptions = PARAM_GROUPS.map(([g, gLabel]) => {
-    const o = paramsForSection(layerKey).filter(d => d.group === g);
-    return o.length ? `<optgroup label="${esc(gLabel)}">${optionGroup(o.map(d => [d.key, d.label]), r.param)}</optgroup>` : '';
-  }).join('') + (badParam ? `<option value="${esc(r.param)}" selected>${esc(labelOf(r.param))} (not available here)</option>` : '');
-
-  const details = `
-    <div class="pd-grid">
-      <label class="pd-field"><span>What to check</span>
-        <select data-change="rule-param" data-rule="${r.id}" aria-label="Parameter for rule ${esc(r.code)}">${paramOptions}</select></label>
-      <label class="pd-field"><span>Test</span>
-        <select data-change="rule-op" data-rule="${r.id}" aria-label="Test for rule ${esc(r.code)}">${optionGroup(operatorsForParam(r.param), r.op)}</select></label>
-      <label class="pd-field"><span>Then</span>
-        <select data-change="rule-action" data-rule="${r.id}" aria-label="Outcome for rule ${esc(r.code)}">${optionGroup(actionsForSection(layerKey), r.action)}${badAction ? `<option value="${esc(r.action)}" selected>${esc(ACTLABEL[r.action] || r.action)} (not available here)</option>` : ''}</select></label>
-      <label class="pd-field pd-wide"><span>Reason code recorded if this decides the outcome</span>
-        <select data-change="rule-rc" data-rule="${r.id}" aria-label="Reason code for rule ${esc(r.code)}">
-          <option value=""${r.rc ? '' : ' selected'}>(no code)</option>
-          ${state.reasonCodes.filter(c => c.kind === 'rule' && (c.active || c.code === r.rc))
-            .map(c => `<option value="${esc(c.code)}"${c.code === r.rc ? ' selected' : ''}>${esc(c.code)} · ${esc(c.label)}</option>`).join('')}
-        </select></label>
-    </div>
-    <div class="pd-foot">
-      <span class="rule-code">${esc(r.code)}</span>
-      <button class="btn btn-outline btn-sm" data-action="remove-rule" data-rule="${r.id}">Remove this condition</button>
-    </div>`;
-
-  return paramRow({
-    id: r.id, name: labelOf(r.param), meaning: esc(sentence(r)),
-    control: valueEditor(r), tags: '', on: r.enabled,
-    onAction: `data-action="toggle-rule" data-rule="${r.id}"`,
-    details, open: !!state.rowOpen[r.id], warn,
-  });
-}
-
-/* ---------- Score bands ---------- */
-
-
-// L5 owns which repayment periods may be offered at all. A band picks from that
-// list rather than holding a free number, so an unofferable term is impossible.
 function permittedTerms() {
   const raw = String(settingValue('layer_5', 'permittedTenures') || '');
   const nums = (raw.match(/\d+/g) || []).map(Number).filter(n => n > 0);
@@ -2910,24 +2883,9 @@ function pathPanel(layer) {
 
 /* ---------- Waterfall screen ---------- */
 
-function layerRuleRows(layerKey) {
-  const c = cfg();
-  const rules = c.rules.filter(r => r.section === layerKey);
-  if (!rules.length) return '';
-  return `
-  <h3 class="panel-title" style="margin-top:18px;">Conditions</h3>
-  <div class="panel-sub" style="margin-bottom:6px;">Each reads as a sentence. Parameters come from <span class="nav-link" data-nav="params">Global setup</span>; only those valid in ${esc(layerKey.toUpperCase())} are offered.</div>
-  ${rules.map(r => conditionRow(r, layerKey)).join('')}
-  <div class="add-rule-wrap" style="padding-left:0;">
-    <button class="add-rule" data-action="add-rule" data-section="${layerKey}">+ Add condition to ${esc(layerKey.toUpperCase())}</button>
-  </div>`;
-}
-
 function layerCard(layer, i) {
   const c = cfg();
   const open = !!c.open[layer.key];
-  const rules = c.rules.filter(r => r.section === layer.key);
-  const enabled = rules.filter(r => r.enabled).length;
   const defs = layerSettingDefs(layer);
   const openCount = defs.filter(d => settingNeedsValue(d, settingValue(layer.key, d.key))).length;
   const showAll = !!state.layerShowAll[layer.key];
@@ -2979,7 +2937,6 @@ function layerCard(layer, i) {
         <div class="lf-note">Limits only ever go down. L3 produces the indicative offer; L4, L5 and L6 can each reduce it and none can raise it.</div>
       </div>` : ''}
 
-    ${layerRuleRows(layer.key)}
   </div>`;
 
   return `
@@ -3010,14 +2967,14 @@ function renderWaterfall() {
 
   const overlapPanel = state.overlapTag ? (() => {
     const g = OVERLAP_GROUPS.find(x => x.tag === state.overlapTag);
-    const rows = tenureOverlapRows();
+    const rows = overlapRows(state.overlapTag);
     return `
     <div class="overlap-panel">
       <div class="overlap-head"><strong>${esc(g.label)}</strong>
         <button class="rule-remove" data-action="hide-overlap" aria-label="Dismiss">×</button></div>
       <div class="overlap-note">${esc(g.note)}</div>
       <table class="overlap-table"><tbody>
-        ${rows.map(r => `<tr><td>${esc(r.where)}</td><td>${esc(r.what)}</td><td><strong>${esc(r.value)}</strong></td></tr>`).join('')}
+        ${rows.map(r => `<tr${r.off ? ' class="is-off"' : ''}><td>${esc(r.where)}</td><td>${esc(r.what)}</td><td><strong>${esc(r.value)}</strong>${r.off ? ' <span class="chip chip-stop">switched off</span>' : ''}</td></tr>`).join('')}
       </tbody></table>
     </div>`;
   })() : '';
@@ -3071,12 +3028,9 @@ function stepState(key) {
   switch (key) {
     case 'waterfall': {
       const open = openParameters().length;
-      const rules = c.rules.length;
-      const invalid = c.rules.filter(r => !paramValidIn(r.param, r.section) || !actionValidIn(r.action, r.section)).length;
-      if (!rules && open) return { state: 'todo', note: 'Nothing configured yet' };
+      const off = allRules(p).filter(r => r.entry.enabled === false).length;
       if (open) return { state: 'partial', note: `${open} need a value` };
-      if (invalid) return { state: 'partial', note: `${invalid} condition${invalid === 1 ? '' : 's'} need attention` };
-      return { state: 'done', note: 'All parameters set' };
+      return { state: 'done', note: off ? `All parameters set, ${off} switched off` : 'All parameters set' };
     }
     // Assessing is a check rather than a setting, so this step is complete once
     // an applicant has actually been run and the note carries what it concluded.
@@ -3407,7 +3361,7 @@ const TYPE_LABEL = {
 function renderParams() {
   const groups = PARAM_GROUPS.map(([g, gLabel, gHint]) => {
     const rows = state.paramDefs.filter(d => d.group === g).map(d => {
-      const used = state.profiles.reduce((n, p) => n + p.config.rules.filter(r => r.param === d.key).length, 0);
+      const used = (d.sections || []).length;
       const typeDetail = d.type === 'category'
         ? `${(d.values || []).length} allowed values`
         : (d.unit ? `in ${d.unit}` : (d.type === 'currency' ? 'in USD' : (d.type === 'percent' ? 'in %' : '')));
@@ -3481,7 +3435,9 @@ function renderFraud() {
 }
 
 function rcUsage(code) {
-  return state.profiles.reduce((n, p) => n + p.config.rules.filter(r => r.rc === code).length, 0);
+  // The engine emits codes from whatever decided; the catalogue holds wording
+  // only, so usage is counted against the layers a code can be emitted from.
+  return state.reasonCodes.some(c => c.code === code) ? 1 : 0;
 }
 
 function renderReasonCodes() {
@@ -3605,9 +3561,9 @@ function renderUsers() {
 
 function renderCreateModal() {
   const dup = state.createMode === 'duplicate';
-  const first = state.profiles.findIndex(p => p.config.rules.length > 0);
+  const first = state.profiles.findIndex(p => Object.keys(p.config.layers || {}).length > 0);
   const baseOptions = state.profiles
-    .filter(p => p.config.rules.length > 0)
+    .filter(p => Object.keys(p.config.layers || {}).length > 0)
     .map(p => {
       const i = state.profiles.indexOf(p);
       const sel = dup && i === first ? ' selected' : '';
@@ -3787,7 +3743,7 @@ function goToTab(key) {
 // matches several elements and focus lands on the wrong one, or on a disabled one.
 const FOCUS_KEYS = ['change', 'action', 'input', 'nav', 'tab', 'step', 'section',
   'rule', 'entry', 'gate', 'key', 'code', 'param', 'list', 'field', 'col', 'row',
-  'val', 'type', 'idx', 'handle', 'layer', 'path'];
+  'val', 'type', 'idx', 'handle', 'layer', 'path', 'tag'];
 
 function focusSignature(el) {
   if (!el || el === document.body || !$view.contains(el)) return null;
@@ -3900,41 +3856,6 @@ document.addEventListener('click', (e) => {
       const all = LAYER_KEYS.every(k => cfg().open[k]);
       LAYER_KEYS.forEach(k => { cfg().open[k] = !all; });
       render(); break;
-    }
-    case 'toggle-rule': {
-      const r = cfg().rules.find(r => r.id === el.dataset.rule);
-      if (r) { r.enabled = !r.enabled; markDirty(); render(); }
-      break;
-    }
-    // Two-step delete: the × arms it, a second click confirms.
-    case 'remove-rule': {
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      state.confirmRemove = el.dataset.rule;
-      render();
-      if (r) announce(`Remove rule ${r.code}? Activate the confirm button to delete it, or click elsewhere to keep it.`);
-      break;
-    }
-    case 'remove-rule-confirm': {
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      cfg().rules = cfg().rules.filter(x => x.id !== el.dataset.rule);
-      state.confirmRemove = null;
-      markDirty(); render();
-      if (r) announce(`Rule ${r.code} removed.`);
-      break;
-    }
-    case 'add-rule': {
-      // Seed the new rule with a parameter and action that are valid here.
-      const sec = el.dataset.section;
-      const d = paramsForSection(sec)[0];
-      const ops = TYPE_OPERATORS[d ? d.type : ''] || ['gte'];
-      const value = d && d.type === 'category' ? (d.values || [''])[0] : joinValue('', '0', d && d.unit ? d.unit : '');
-      cfg().rules.push({
-        id: 'n' + Date.now(), section: sec,
-        param: d ? d.key : '', op: ops[0], value,
-        action: (SECTION_ACTIONS[sec] || ['pass'])[0],
-        enabled: true, code: 'NEW', rc: '',
-      });
-      markDirty(); render(); break;
     }
     case 'fb-toggle': {
       const en = cfg().fallback.entries.find(x => x.id === el.dataset.entry);
@@ -4091,17 +4012,6 @@ document.addEventListener('click', (e) => {
       announce(`Not ready to publish. Finish ${blockers.join(', ')} first.`);
       break;
     }
-    case 'val-chip': {
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      if (r) {
-        const v = el.dataset.val;
-        const chosen = catList(r.value);
-        const next = chosen.includes(v) ? chosen.filter(x => x !== v) : [...chosen, v];
-        r.value = next.join(', ');
-        markDirty();
-      }
-      render(); break;
-    }
     case 'param-section': {
       const d = paramDef(el.dataset.key);
       if (d) {
@@ -4178,7 +4088,7 @@ document.addEventListener('click', (e) => {
         versions: [],
         // A brand-new draft starts level with itself: zero delta until edited.
         liveBands: structuredClone(base ? base.config.bands : EMPTY_BANDS),
-        liveRules: base ? structuredClone(base.config.rules) : [],
+        liveRules: base ? snapshotRules(base) : {},
         liveLimits: structuredClone(base ? base.config.limits : LIMITS_EMPTY),
         config: base ? structuredClone(base.config) : {
           rules: [],
@@ -4206,7 +4116,7 @@ document.addEventListener('click', (e) => {
         ...copy,
         // The copy is its own baseline; it has not diverged from anything yet.
         liveBands: structuredClone(copy.config.bands),
-        liveRules: structuredClone(copy.config.rules),
+        liveRules: snapshotRules(copy),
         liveLimits: structuredClone(copy.config.limits),
         name: `${src.name} (copy)`,
         version: 'v0.1', status: 'Draft',
@@ -4231,41 +4141,6 @@ document.addEventListener('change', (e) => {
   const kind = el.dataset.change;
 
   switch (kind) {
-    case 'rule-rc': setRule(el.dataset.rule, 'rc', el.value); break;
-    case 'rule-param': {
-      // Switching parameter switches type, so coerce the operator and value
-      // to something valid rather than leaving a nonsensical combination.
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      if (r) {
-        r.param = el.value;
-        const d = paramDef(r.param);
-        const ops = (TYPE_OPERATORS[d ? d.type : ''] || []);
-        if (ops.length && !ops.includes(r.op)) r.op = ops[0];
-        if (d && d.type === 'category') {
-          if (!(d.values || []).includes(r.value)) r.value = (d.values || [''])[0];
-        } else {
-          const { num } = splitValue(r.value);
-          r.value = joinValue('', num || '0', d && d.unit ? d.unit : '');
-        }
-        // The old upper bound carried the old parameter's unit, so re-derive it.
-        r.value2 = '';
-        if (r.op === 'between') r.value2 = upperValue(r);
-        markDirty();
-      }
-      render(); break;
-    }
-    case 'val-num': {
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      if (r) { r.value = joinValue(el.dataset.prefix || '', cleanNum(el, r.value), el.dataset.suffix || ''); markDirty(); }
-      render(); break;
-    }
-    case 'val-num2': {
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      if (r) { r.value2 = joinValue(el.dataset.prefix || '', cleanNum(el, r.value2), el.dataset.suffix || ''); markDirty(); }
-      render(); break;
-    }
-    case 'val-cat': setRule(el.dataset.rule, 'value', el.value); break;
-    // One field of a rule's value object.
     case 'rule-field': {
       const entry = settingEntry(el.dataset.list, el.dataset.key);
       const f = el.dataset.field;
@@ -4335,18 +4210,6 @@ document.addEventListener('change', (e) => {
       m[rI][Number(el.dataset.col)] = el.value;
       markDirty(); render(); break;
     }
-    case 'rule-op': {
-      // `between` needs an upper bound, or the sentence it reads back is broken.
-      const r = cfg().rules.find(x => x.id === el.dataset.rule);
-      if (r) {
-        r.op = el.value;
-        if (r.op === 'between' && !r.value2) r.value2 = upperValue(r);
-        markDirty();
-      }
-      render(); break;
-    }
-    case 'rule-value': setRule(el.dataset.rule, 'value', el.value); break;
-    case 'rule-action': setRule(el.dataset.rule, 'action', el.value); break;
     case 'score-min':
       state.scoreMin = Number(el.value) || 0; render(); break;
     case 'score-max':

@@ -135,11 +135,11 @@ const LAYERS = [
     settings: [
       { key: 'feature_completeness', label: 'Feature completeness', type: 'dual', essential: true,
         meaning: 'Share of the features the model needs that are actually present for this customer. If the model uses 40 features and 28 are there, completeness is 70 percent.' },
-      { key: 'wallet_tenure', label: 'Wallet tenure', type: 'dual', essential: true,
+      { key: 'wallet_tenure', label: 'Wallet tenure', type: 'dual', essential: true, overlap: 'tenure',
         meaning: 'Days since the Ecocash account was opened. Behaviour observed over a short period is not reliable evidence, so this is the floor for trusting a score at all.' },
       { key: 'transaction_history', label: 'Transaction history', type: 'dual', essential: true,
         meaning: 'Distinct days in the last 90 on which the customer transacted. Measures genuine activity rather than a dormant account with one transaction.' },
-      { key: 'dormancy', label: 'Dormancy', type: 'dual', essential: false,
+      { key: 'dormancy', label: 'Dormancy', type: 'dual', essential: false, overlap: 'dormancy',
         meaning: 'Days since the last transaction of any kind. A long gap means the observed behaviour is stale, not that the customer is ineligible.' },
       { key: 'model_confidence', label: 'Model confidence', type: 'dual', essential: true,
         meaning: 'Confidence returned alongside the score. Below the floor the score is not trusted. This one routes to thin file and never to no file, because low confidence is the model’s problem, not the customer’s.' },
@@ -154,7 +154,7 @@ const LAYERS = [
     question: 'Is the customer eligible at all?',
     intro: 'Absolute eligibility, and eligibility only. The evidence thresholds sit at L0, which is what lets a genuinely new customer pass here and reach a starter offer. These are not risk judgements and the score does not affect them.',
     settings: [
-      { key: 'currently_delinquent', label: 'Currently delinquent', type: 'days', essential: true, action: 'decline',
+      { key: 'currently_delinquent', label: 'Currently delinquent', type: 'days', essential: true, overlap: 'delinquency', action: 'decline',
         meaning: 'Days past due on any open loan above which a new loan is refused.' },
       { key: 'prior_default_lookback', label: 'Prior default with Ecocash', type: 'months', essential: true, action: 'decline',
         meaning: 'Excludes a customer who has defaulted with Ecocash inside this window. Commercial rather than technical: a lookback trades safety against a smaller customer base. Set it knowing the daily data lag.' },
@@ -162,7 +162,7 @@ const LAYERS = [
         meaning: 'Youngest customer who may be offered credit.' },
       { key: 'maximum_age_at_maturity', label: 'Maximum age at maturity', type: 'threshold', essential: true, action: 'decline',
         meaning: 'Oldest a customer may be when the final instalment falls due, not when they apply.' },
-      { key: 'kyc_status', label: 'KYC status', type: 'multi', essential: true, action: 'decline',
+      { key: 'kyc_status', label: 'KYC status', type: 'multi', essential: true, overlap: 'kyc', action: 'decline',
         meaning: 'Which verification tiers are eligible. Carried through the serving store as a raw eligibility field, because it is excluded from the model feature set.' },
       { key: 'account_status', label: 'Account status', type: 'multi', essential: true, action: 'decline',
         meaning: 'Which wallet states are eligible.' },
@@ -183,11 +183,11 @@ const LAYERS = [
     question: 'Does the application carry identity risk?',
     intro: 'Identity risk rather than credit risk, where the warning signs and the remedies both differ. Most of these refer rather than decline, because fraud rules always catch some genuine customers. SIM registration age and swap history are not available from the data and are deliberately not part of this design.',
     settings: [
-      { key: 'minimum_account_age', label: 'Minimum account age', type: 'days', essential: false, action: 'refer',
+      { key: 'minimum_account_age', label: 'Minimum account age', type: 'days', essential: false, overlap: 'tenure', action: 'refer',
         meaning: 'Wallet age below which the application is referred. Distinct from the L0 threshold, which asks whether a score can be trusted.' },
       { key: 'application_velocity', label: 'Application velocity', type: 'window', essential: false, action: 'refer',
         meaning: 'Repeated applications in a short window suggest shopping for an approval. Computed live rather than from the daily extract.' },
-      { key: 'dormant_then_suddenly_active', label: 'Dormant then suddenly active', type: 'composite', essential: false, action: 'refer',
+      { key: 'dormant_then_suddenly_active', label: 'Dormant then suddenly active', type: 'composite', essential: false, overlap: 'dormancy', action: 'refer',
         meaning: 'An account that was quiet and then became busy shortly before applying.' },
       { key: 'profile_change_velocity', label: 'Profile change velocity', type: 'window', essential: false, action: 'refer',
         meaning: 'KYC or contact details changing just before an application is an account-takeover signal.' },
@@ -227,7 +227,7 @@ const LAYERS = [
         meaning: 'The top band a scorecard-scored customer can reach.' },
       { key: 'average_wallet_balance_points', label: 'Average balance points', type: 'points', essential: false,
         meaning: 'Points for the average wallet balance. The largest single contributor, because a maintained balance is the strongest thin-file signal.' },
-      { key: 'wallet_tenure_points', label: 'Wallet tenure points', type: 'points', essential: false,
+      { key: 'wallet_tenure_points', label: 'Wallet tenure points', type: 'points', essential: false, overlap: 'tenure',
         meaning: 'Points awarded for how long the wallet has been open.' },
       { key: 'active_days_last_30_points', label: 'Active days points', type: 'points', essential: false,
         meaning: 'Points for distinct days with activity in the last 30.' },
@@ -239,7 +239,7 @@ const LAYERS = [
         meaning: 'Points for the lowest balance held, which shows whether the wallet is ever emptied.' },
       { key: 'inflow_regularity_points', label: 'Inflow regularity points', type: 'points', essential: false,
         meaning: 'Points for how regularly money arrives, rather than how much.' },
-      { key: 'kyc_completeness_points', label: 'KYC completeness points', type: 'points', essential: false,
+      { key: 'kyc_completeness_points', label: 'KYC completeness points', type: 'points', essential: false, overlap: 'kyc',
         meaning: 'Points for how complete the customer’s verification record is.' },
       { key: 'starter_limit_thin_file', label: 'Starter limit, thin file', type: 'currency', essential: true,
         meaning: 'The most offered to a thin-file customer on a first loan.' },
@@ -255,7 +255,7 @@ const LAYERS = [
         meaning: 'How much the limit rises after each successfully repaid loan, as a share of the previous limit.' },
       { key: 'max_ladder_limit', label: 'Maximum limit via the ladder', type: 'currency', essential: false,
         meaning: 'The ceiling reachable through the ladder alone, before normal band scoring applies.' },
-      { key: 'reset_on_delinquency', label: 'Reset on delinquency', type: 'days', essential: false,
+      { key: 'reset_on_delinquency', label: 'Reset on delinquency', type: 'days', essential: false, overlap: 'delinquency',
         meaning: 'The level of lateness that resets a customer to the starter limit.' },
       { key: 'cooling_period_after_decline', label: 'Cooling period after decline', type: 'days', essential: false,
         meaning: 'How long a declined customer waits before applying again.' },
@@ -436,8 +436,14 @@ const LAYER_KEYS = LAYERS.map(l => l.key);
 // draft sets these independently, so the console flags the overlap rather than
 // silently resolving it.
 const OVERLAP_GROUPS = [
-  { tag: 'tenure', label: 'Account age is gated twice, on purpose',
-    note: 'L0 asks whether there is enough history to trust a score. L1 asks whether the customer is eligible at all. Different questions, but set independently, and the stricter one always wins. Check both are intentional.' },
+  { tag: 'tenure', label: 'Account age is read in three places, on purpose',
+    note: 'L0 asks whether there is enough history to trust a score. L2 asks whether a very new account is a fraud signal. L3a awards points for it on the fallback scorecard. Different questions on the same field, set independently, and the strictest always wins. Check all three are intentional.' },
+  { tag: 'kyc', label: 'KYC is read twice, on purpose',
+    note: 'L1 uses it as an absolute eligibility gate. L3a awards scorecard points for how complete the record is. A customer can therefore fail the gate and still have scored points, which is harmless because L1 runs first and stops the application.' },
+  { tag: 'dormancy', label: 'Dormancy is read twice, on purpose',
+    note: 'L0 asks whether a long gap makes the observed behaviour stale, which routes. L2 asks whether an account that went quiet and then became busy is a takeover signal, which refers. Same field, different question, different remedy.' },
+  { tag: 'delinquency', label: 'Delinquency is read twice, on purpose',
+    note: 'L1 refuses a new loan while the customer is past due. L3a resets a laddered customer to the starter limit at a different level of lateness. Set them knowing the daily data lag: a delinquency arising since the last extract is invisible to both.' },
 ];
 
 
@@ -459,35 +465,6 @@ const SENT_OP = { gte: 'is at least', lte: 'is at most', between: 'is between', 
 
 // Rule tuples: [section, param, op, value, action, enabled, code, reasonCode]
 // reasonCode is the code the engine emits when THIS rule determines the outcome.
-const RULES = [
-  ['layer_1', 'age', 'gte', '18 years', 'pass', true, 'E-01', 'RC-101'],
-  ['layer_1', 'age', 'lte', '65 years', 'pass', true, 'E-02', 'RC-101'],
-  ['layer_1', 'kyc', 'eq', 'Fully verified (Tier 2)', 'pass', true, 'E-03', 'RC-102'],
-  ['layer_1', 'account', 'in', 'Active, Active-dormant <30d', 'pass', true, 'E-04', 'RC-103'],
-  ['layer_1', 'blocklist', 'eq', 'No match', 'pass', true, 'E-05', 'RC-501'],
-  ['layer_0', 'txnMonths', 'gte', '3 months', 'pass', true, 'D-01', 'RC-301'],
-  ['layer_0', 'inflow', 'gte', '$40 per month', 'pass', true, 'D-02', 'RC-303'],
-  ['layer_0', 'consistency', 'lte', '0.55 index', 'capThin', true, 'D-03', 'RC-302'],
-  ['layer_0', 'volatility', 'gte', '0.80 coefficient', 'refer', false, 'D-04', 'RC-302'],
-  ['layer_3', 'score', 'gte', '500 points', 'pass', true, 'L-01', 'RC-114'],
-  ['layer_1', 'exposure', 'gte', '$1 in open device loans', 'decline', true, 'E-06', 'RC-401'],
-  ['layer_4', 'afford', 'gte', '25% of inferred monthly income', 'capAfford', true, 'A-01', 'RC-207'],
-  ['layer_4', 'income', 'gte', '3× monthly instalment', 'pass', true, 'A-02', 'RC-207'],
-  ['layer_4', 'inflow', 'lte', '2.5× monthly instalment', 'reduce', true, 'A-03', 'RC-207'],
-  ['layer_5', 'exposure', 'gte', '$600 total across products', 'capAfford', true, 'X-01', 'RC-401'],
-  ['layer_5', 'exposure', 'gte', '$450 on this product', 'capAfford', true, 'X-02', 'RC-401'],
-  ['layer_5', 'cluster', 'gte', '3 wallets', 'decline', false, 'X-03', 'RC-403'],
-  ['layer_3', 'onTime', 'gte', '2 instalments', 'ladder', true, 'C-01', 'RC-701'],
-  ['layer_3', 'arrears', 'eq', '0 days', 'ladder', true, 'C-02', 'RC-701'],
-  ['layer_3', 'score', 'gte', '+40 points since last review', 'ladder', false, 'C-03', 'RC-701'],
-  ['layer_6', 'dailyApprovals', 'gte', '1,200 approvals', 'throttle', true, 'B-01', 'RC-601'],
-  ['layer_6', 'dailyDisbursed', 'gte', '$45,000', 'throttle', true, 'B-02', 'RC-601'],
-  ['layer_6', 'popAffected', 'gte', '5%', 'refer', true, 'B-03', 'RC-602'],
-  ['layer_2', 'sim', 'lte', '90 days', 'decline', true, 'F-02', 'RC-502'],
-  ['layer_2', 'cluster', 'gte', '3 wallets', 'refer', true, 'F-03', 'RC-403'],
-  ['layer_6', 'pilotCell', 'in', 'Harare, Bulawayo', 'pass', true, 'P-01', 'RC-402'],
-  ['layer_6', 'pilotExposure', 'gte', '$1,000,000 launch maximum', 'throttle', true, 'P-02', 'RC-603'],
-];
 
 // ---------------------------------------------------------------------------
 // Single-customer assessment
@@ -699,24 +676,6 @@ const USERS = [
 ];
 
 // Airtime Advance: small instant top-up credit, with its own rule set and bands.
-const AA_RULES = [
-  ['layer_1', 'age', 'gte', '18 years', 'pass', true, 'E-01', 'RC-101'],
-  ['layer_1', 'kyc', 'in', 'Fully verified (Tier 2), SIM-registered (Tier 1)', 'pass', true, 'E-02', 'RC-102'],
-  ['layer_1', 'account', 'in', 'Active', 'pass', true, 'E-03', 'RC-103'],
-  ['layer_1', 'blocklist', 'eq', 'No match', 'pass', true, 'E-04', 'RC-501'],
-  ['layer_0', 'txnMonths', 'gte', '1 month', 'pass', true, 'D-01', 'RC-301'],
-  ['layer_0', 'inflow', 'gte', '$5 per month', 'pass', true, 'D-02', 'RC-303'],
-  ['layer_3', 'score', 'gte', '380 points', 'pass', true, 'L-01', 'RC-114'],
-  ['layer_1', 'exposure', 'gte', '$1 in open advances', 'decline', true, 'E-05', 'RC-401'],
-  ['layer_4', 'afford', 'gte', '15% of inferred monthly income', 'capAfford', true, 'A-01', 'RC-207'],
-  ['layer_5', 'exposure', 'gte', '$15 on this product', 'capAfford', true, 'X-01', 'RC-401'],
-  ['layer_3', 'onTime', 'gte', '3 repayments', 'ladder', true, 'C-01', 'RC-701'],
-  ['layer_3', 'arrears', 'eq', '0 days', 'ladder', true, 'C-02', 'RC-701'],
-  ['layer_6', 'dailyApprovals', 'gte', '8,000 approvals', 'throttle', true, 'B-01', 'RC-601'],
-  ['layer_6', 'dailyDisbursed', 'gte', '$20,000', 'throttle', true, 'B-02', 'RC-601'],
-  ['layer_2', 'sim', 'lte', '30 days', 'decline', true, 'F-02', 'RC-502'],
-  ['layer_6', 'pilotCell', 'in', 'All cells nationwide', 'pass', true, 'P-01', 'RC-402'],
-];
 
 // Bands come straight from the engine's layer_3 band_table: A to E on the
 // 0 to 100 score scale, with the decision, tenure and deposit each one carries.
@@ -978,19 +937,19 @@ const PROFILE_SEEDS = [
   {
     name: 'Device Financing', blurb: 'Handset instalments, 3–6 months, Ecocash wallet', market: 'Zimbabwe',
     version: 'v1.5', status: 'Draft', editedAt: '4 Aug 2026, 11:20', editedBy: 'T. Moyo', third: 'Roll back',
-    rules: RULES, bands: DF_BANDS, versions: DF_VERSIONS, limits: LIMITS_DF, coldStart: COLDSTART_DF, layers: LAYER_SEEDS.df,
+    bands: DF_BANDS, versions: DF_VERSIONS, limits: LIMITS_DF, coldStart: COLDSTART_DF, layers: LAYER_SEEDS.df,
     touched: { simulate: true },
   },
   {
     name: 'Airtime Advance', blurb: 'Instant airtime top-up credit, repaid on next recharge', market: 'Zimbabwe',
     version: 'v2.1', status: 'Published', editedAt: '28 Jul 2026, 09:15', editedBy: 'R. Chikanda', third: 'View',
-    rules: AA_RULES, bands: AA_BANDS, versions: AA_VERSIONS, limits: LIMITS_AA, coldStart: COLDSTART_AA, layers: LAYER_SEEDS.aa,
+    bands: AA_BANDS, versions: AA_VERSIONS, limits: LIMITS_AA, coldStart: COLDSTART_AA, layers: LAYER_SEEDS.aa,
     touched: { simulate: true },
   },
   {
     name: 'Life Cover', blurb: 'Premium affordability profile, not yet configured', market: 'Zimbabwe',
     version: 'n/a', status: 'Not started', editedAt: 'n/a', editedBy: 'n/a', third: 'Copy rules',
-    rules: [], bands: EMPTY_BANDS, versions: [], limits: LIMITS_EMPTY, coldStart: COLDSTART_BLANK, layers: LAYER_SEEDS.blank,
+    bands: EMPTY_BANDS, versions: [], limits: LIMITS_EMPTY, coldStart: COLDSTART_BLANK, layers: LAYER_SEEDS.blank,
     touched: { simulate: false },
     blank: true,   // nothing seeded; this profile starts from zero
   },

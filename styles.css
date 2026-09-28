@@ -1218,7 +1218,9 @@ select.band-input { width: auto; min-width: 74px; cursor: pointer; }
   background: #F9FAFB; color: #667085; cursor: default;
 }
 .fb-signal { min-width: 170px; max-width: 200px; }
-.fb-op { min-width: 88px; }
+.fb-op { min-width: 88px;
+  min-height: 28px; box-sizing: border-box;
+}
 .fb-value { width: 150px; }
 .fb-points {
   width: 64px; text-align: right;
@@ -1516,5 +1518,6 @@ select.band-input { width: auto; min-width: 74px; cursor: pointer; }
 .rule-table-note code {
   background: #F2F4F7; border-radius: 4px; padding: 1px 5px; font-size: 11.5px;
 }
+.overlap-table tr.is-off td { opacity: 0.7; }
 .band-picker { display: flex; gap: 6px; flex-wrap: wrap; }
 .band-picker .seg-btn { min-width: 38px; justify-content: center; }
