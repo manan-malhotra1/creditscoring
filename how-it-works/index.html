@@ -185,6 +185,27 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
 .seg .b { font:700 14px Montserrat; } .seg .r { font:500 11.5px 'IBM Plex Mono', monospace; }
 .scale-note { display:flex; justify-content:space-between; font-size:11.5px; color:var(--ink-3); margin-top:7px; }
 
+/* ---------- Three paths ---------- */
+.paths { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+.path { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:var(--shadow); border-top:3px solid var(--accent); }
+.path.thin { border-top-color:var(--teal); }
+.path.nofile { border-top-color:#F5C860; }
+.path-k { font:700 11.5px Montserrat; letter-spacing:1.2px; text-transform:uppercase; color:var(--ink-3); }
+.path-h { font-size:17px; font-weight:700; margin:8px 0 6px 0; }
+.path-p { font-size:13px; color:var(--ink-2); margin:0 0 15px 0; text-wrap:pretty; }
+.path-note { font-size:12.5px; color:var(--ink-3); margin-top:14px; padding-top:13px; border-top:1px solid var(--line-2); text-wrap:pretty; }
+.pts { display:flex; flex-direction:column; gap:5px; }
+.pt { display:grid; grid-template-columns:1fr 96px 34px; gap:9px; align-items:center; font-size:12.5px; color:var(--ink-2); }
+.pt-t { display:block; height:7px; border-radius:5px; background:var(--line-2); overflow:hidden; }
+.pt-f { display:block; height:7px; border-radius:5px; background:linear-gradient(90deg,var(--teal),var(--accent)); }
+.pt-v { font:600 12px 'IBM Plex Mono',monospace; color:var(--ink); text-align:right; }
+.ladder { display:flex; align-items:stretch; gap:5px; height:132px; margin-bottom:6px; }
+.rung { flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:4px; min-width:0; }
+.rung-b { display:block; width:100%; border-radius:5px 5px 0 0; background:linear-gradient(180deg,var(--teal),var(--accent)); min-height:6px; }
+.rung.cap .rung-b { background:linear-gradient(180deg,#F5C860,#E8A317); }
+.rung-v { display:block; font:600 11.5px 'IBM Plex Mono',monospace; color:var(--ink); white-space:nowrap; }
+.rung-l { display:block; font-size:11.5px; color:var(--ink-3); text-align:center; white-space:nowrap; }
+
 /* ---------- Layer B waterfall ---------- */
 .lb { display:flex; flex-direction:column; gap:0; }
 .lrow {
@@ -301,6 +322,7 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
         <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M2 1l9 5-9 5z"/></svg>
         <span id="play-t">Run a customer</span>
       </button>
+      <a class="tbtn" href="../overview/" style="text-decoration:none;">One page</a>
       <button class="tbtn" id="theme" aria-label="Switch to light theme">
         <span id="theme-t">Light</span>
       </button>
@@ -314,7 +336,7 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
     <div class="eyebrow">How it works</div>
     <h1>From a daily file drop<br>to <span class="g">a credit decision</span></h1>
     <p class="lede">Every night, Ecocash files land in Azure. By morning each customer carries a score and a set of
-      features. When an application arrives, a rule engine turns that score into a yes, a no, or an amount.
+      features. When an application arrives, a rule engine turns that score into a yes with an amount, or a no.
       This page shows the whole path, and exactly which numbers the credit team controls.</p>
 
     <div class="two-layer">
@@ -328,8 +350,8 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
       <div class="tl b">
         <div class="tl-tag">Layer B</div>
         <div class="tl-h">The rule engine</div>
-        <p class="tl-p">Turns that number into an offer: approve, refer or decline, and where it approves, a limit,
-          a tenure and a deposit. All credit policy lives here.</p>
+        <p class="tl-p">Turns that number into an offer: approve or decline, and where it approves, a limit, a
+          tenure and a deposit. All credit policy lives here. No referral step in phase 1.</p>
         <div class="tl-foot">Owned by <b>the credit team</b>. <b>65 rules</b>, each editable without a code change.</div>
       </div>
     </div>
@@ -468,10 +490,71 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
     </div>
   </section>
 
-  <!-- 3. Layer B -->
+  <!-- 3. Three paths -->
   <section id="s3">
     <div class="sec-head">
-      <h2><span class="sec-n">3</span>Layer B: the decision waterfall</h2>
+      <h2><span class="sec-n">3</span>Three paths, and nobody is turned away for being new</h2>
+      <p class="sec-sub">L0 decides which of three routes a customer takes. It routes, it never declines. A customer
+        the model cannot rank is scored another way, and a customer with nothing at all still gets a first offer.</p>
+    </div>
+    <div class="paths">
+      <div class="path">
+        <div class="path-k">Path 1</div>
+        <div class="path-h">Scored</div>
+        <p class="path-p">Every sufficiency threshold met. The trained model ranks them and the band table sets the
+          offer, up to the full product maximum.</p>
+        <div class="chipline">
+          <span class="chip">Score from <b>the model</b></span>
+          <span class="chip">Bands <b>A to E</b></span>
+          <span class="chip">Up to <b>$500</b></span>
+        </div>
+        <div class="path-note">The normal path. Everything in Layer B applies in full.</div>
+      </div>
+
+      <div class="path thin">
+        <div class="path-k">Path 2</div>
+        <div class="path-h">Thin file: the fallback scorecard</div>
+        <p class="path-p">Some history, but not enough for the model to rank them. Eight observed signals are scored
+          on points and the total enters the same 0 to 100 band table. Deterministic arithmetic, no training.</p>
+        <div class="pts">
+          <div class="pt"><span>Average wallet balance</span><span class="pt-t"><span class="pt-f" style="width:100%"></span></span><span class="pt-v">0&ndash;20</span></div>
+          <div class="pt"><span>Wallet tenure</span><span class="pt-t"><span class="pt-f" style="width:75%"></span></span><span class="pt-v">0&ndash;15</span></div>
+          <div class="pt"><span>Active days, last 30</span><span class="pt-t"><span class="pt-f" style="width:75%"></span></span><span class="pt-v">0&ndash;15</span></div>
+          <div class="pt"><span>Positive cash-flow days</span><span class="pt-t"><span class="pt-f" style="width:75%"></span></span><span class="pt-v">0&ndash;15</span></div>
+          <div class="pt"><span>Transactions, last 30</span><span class="pt-t"><span class="pt-f" style="width:50%"></span></span><span class="pt-v">0&ndash;10</span></div>
+          <div class="pt"><span>Minimum wallet balance</span><span class="pt-t"><span class="pt-f" style="width:50%"></span></span><span class="pt-v">0&ndash;10</span></div>
+          <div class="pt"><span>Inflow regularity</span><span class="pt-t"><span class="pt-f" style="width:50%"></span></span><span class="pt-v">0&ndash;10</span></div>
+          <div class="pt"><span>KYC completeness</span><span class="pt-t"><span class="pt-f" style="width:25%"></span></span><span class="pt-v">0&ndash;5</span></div>
+        </div>
+        <div class="path-note">Capped at <b>band C</b>, because a points total is a rougher estimate than a model
+          score. Starter limit <b>$50</b>. The scorecard is a bridge, not a permanent parallel system: it is retired
+          for a segment once the model can score it.</div>
+      </div>
+
+      <div class="path nofile">
+        <div class="path-k">Path 3</div>
+        <div class="path-h">No file: starter limit and the ladder</div>
+        <p class="path-p">Nothing to score at all. They are <b>not rejected</b>. A small starter limit is offered and
+          every loan repaid in full raises it by half again, until normal band scoring takes over.</p>
+        <div class="ladder">
+          <div class="rung"><span class="rung-v">$30</span><span class="rung-b" style="height:10.559999999999999%"></span><span class="rung-l">start</span></div>
+          <div class="rung"><span class="rung-v">$45</span><span class="rung-b" style="height:15.84%"></span><span class="rung-l">loan 1</span></div>
+          <div class="rung"><span class="rung-v">$68</span><span class="rung-b" style="height:23.936%"></span><span class="rung-l">loan 2</span></div>
+          <div class="rung"><span class="rung-v">$101</span><span class="rung-b" style="height:35.552%"></span><span class="rung-l">loan 3</span></div>
+          <div class="rung"><span class="rung-v">$152</span><span class="rung-b" style="height:53.504%"></span><span class="rung-l">loan 4</span></div>
+          <div class="rung"><span class="rung-v">$228</span><span class="rung-b" style="height:80.256%"></span><span class="rung-l">loan 5</span></div>
+        </div>
+        <div class="path-note">Starts at <b>$30</b> over 3 months with a 30% deposit, rises <b>50% per repaid
+          cycle</b>, ceiling <b>$250</b>. Falling 30 days past due resets to the start. Set the starter limit to zero
+          and this group declines instead, by policy arithmetic rather than a gate.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Layer B -->
+  <section id="s4">
+    <div class="sec-head">
+      <h2><span class="sec-n">4</span>Layer B: the decision waterfall</h2>
       <p class="sec-sub">Eight layers, evaluated top to bottom, cheapest and most decisive first. Two rules govern
         the whole engine: <b>any layer can stop the process</b>, and <b>limits only ever go down</b>.</p>
     </div>
@@ -479,9 +562,9 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
   </section>
 
   <!-- 4. What sets the amount -->
-  <section id="s4">
+  <section id="s5">
     <div class="sec-head">
-      <h2><span class="sec-n">4</span>What actually sets the amount</h2>
+      <h2><span class="sec-n">5</span>What actually sets the amount</h2>
       <p class="sec-sub">The final limit is not calculated, it is selected. Every layer contributes a ceiling and the
         lowest one wins. This is why a weaker customer is approved with a small limit rather than declined.</p>
     </div>
@@ -493,9 +576,9 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
   </section>
 
   <!-- 5. Fixed vs configurable -->
-  <section id="s5">
+  <section id="s6">
     <div class="sec-head">
-      <h2><span class="sec-n">5</span>What you can change, and what you cannot</h2>
+      <h2><span class="sec-n">6</span>What you can change, and what you cannot</h2>
       <p class="sec-sub">The clean split between the two layers is the point of the design. One side moves with a
         retrain; the other moves with a setting, the same afternoon.</p>
     </div>
@@ -527,9 +610,9 @@ h2 { display:flex; align-items:center; font-size:26px; font-weight:700; margin:0
   </section>
 
   <!-- 6. Walkthrough -->
-  <section id="s6">
+  <section id="s7">
     <div class="sec-head">
-      <h2><span class="sec-n">6</span>One customer, end to end</h2>
+      <h2><span class="sec-n">7</span>One customer, end to end</h2>
       <p class="sec-sub">The same applicant, run down the whole waterfall. Press <b>Run a customer</b> in the header,
         or pick a different applicant below.</p>
     </div>
@@ -592,17 +675,17 @@ tb.addEventListener('click', () => setTheme(root.getAttribute('data-theme') === 
 /* ---------- Data, as the engine holds it ---------- */
 const BANDS = [
   { b:'E', lo:0,  hi:30,  d:'Decline',  c:'#4E5A70' },
-  { b:'D', lo:30, hi:50,  d:'Refer',    c:'#9BD4DE' },
-  { b:'C', lo:50, hi:70,  d:'Refer',    c:'#48C2CF' },
+  { b:'D', lo:30, hi:50,  d:'Approve',  c:'#9BD4DE' },
+  { b:'C', lo:50, hi:70,  d:'Approve',  c:'#48C2CF' },
   { b:'B', lo:70, hi:85,  d:'Approve',  c:'#2E7BB0' },
   { b:'A', lo:85, hi:100, d:'Approve',  c:'#144989' },
 ];
 const LAYERS = [
   ['L0','Data sufficiency and routing','Is there enough data to trust a score?',7,'route','Routes'],
   ['L1','Hard knockouts','Is the customer eligible at all?',11,'stop','Can decline'],
-  ['L2','Fraud screens','Does the application carry identity risk?',6,'stop','Mostly refers'],
+  ['L2','Fraud screens','Does the application carry identity risk?',6,'stop','Can decline'],
   ['L3','Score bands','What band, and what is the indicative offer?',7,'cut','Sets the offer'],
-  ['L3a','Fallback scorecard and ladder','How is a customer the model cannot score handled?',18,'route','Alternate path'],
+  ['L3a','Fallback scorecard and ladder','How is a customer the model cannot score handled?',18,'route','Scores the rest'],
   ['L4','Affordability','Is this instalment sustainable against income?',10,'cut','Cuts the limit'],
   ['L5','Exposure and limits','What is the final limit?',6,'cut','Lowest cap wins'],
   ['L6','Portfolio controls','Is this approval acceptable for the book?',6,'stop','Can throttle'],
@@ -628,22 +711,33 @@ const PEOPLE = [
       ['L0','Thin file','Below sufficiency, above every hard floor','9 active days vs 15 needed'],
       ['L1','Passed','Eligible: L0 routes, it never declines','nothing here depends on history'],
       ['L2','Passed','No identity risk',''],
-      ['L3a','Starter','Scored on points, not the model','starter limit $50, capped at band C'],
+      ['L3a','Scorecard','Scored on eight observed signals, not the model','balance 18 + tenure 11 + active days 9 + ... = 54 of 100'],
       ['L4','Checked','Affordability still applies, with no bypass','$20 a month over 3 months'],
-      ['L5','$50','Starter limit was the lowest cap','deposit 30% required'],
+      ['L5','$50','Thin-file starter limit was the lowest cap','deposit 30% required'],
       ['L6','Held','Thin-file share of approvals watched','40% ceiling on the day'],
-    ], out:'Approve', big:'$50', why:'The starter limit bound it. This customer builds a record and the ladder raises the limit as they repay.',
+    ], out:'Approve', big:'$50', why:'The scorecard put this customer at 54, inside band C, and the thin-file starter limit bound the offer. Every repaid loan raises it by half again, up to $250.',
     json:[['decision','APPROVE'],['routing','THIN_FILE'],['scoreSource','SCORECARD'],['approvedLimit','50'],['tenure','3 months'],['deposit','30%']] },
+  { n:'No file', d:'Brand new wallet, nothing to score. Still gets an offer.',
+    steps:[
+      ['L0','No file','At least one parameter below its hard floor','21 days old against a 30 day floor'],
+      ['L1','Passed','Eligible. L0 routes, it never declines','age and KYC are fine, history is not needed'],
+      ['L2','Passed','No identity risk',''],
+      ['L3a','Starter','No score at all, so the ladder starts them','starter limit $30, 3 months, 30% deposit'],
+      ['L4','Checked','Affordability applies here too','a deeper 40% haircut for having no history'],
+      ['L5','$30','Starter limit was the lowest cap','above the $30 minimum viable limit, so an offer stands'],
+      ['L6','Passed','New-to-credit concentration watched','50% ceiling on the book'],
+    ], out:'Approve', big:'$30', why:'A no-file customer is not declined. They start on the ladder and earn their way up: repay once and the limit rises by half again, to a ceiling of $250, after which normal band scoring takes over.',
+    json:[['decision','APPROVE'],['routing','NO_FILE'],['scoreSource','LADDER'],['approvedLimit','30'],['tenure','3 months'],['deposit','30%']] },
   { n:'Not eligible', d:'Everything looks fine until the knockouts run.',
     steps:[
       ['L0','Scored','Enough data to score',''],
-      ['L1','Stopped','Failed a hard knockout','dormant 64 days against a 30 day limit'],
+      ['L1','Declined','Failed a hard knockout','dormant 64 days against a 30 day limit'],
       ['L2','Not reached','An earlier layer decided',''],
       ['L3','Not reached','',''],
       ['L4','Not reached','',''],
       ['L5','Not reached','',''],
       ['L6','Not reached','',''],
-    ], out:'Decline', big:'No offer', why:'A hard knockout is not a risk judgement. No score was used and no later layer ran, which is what makes the decision fast and easy to explain.',
+    ], out:'Decline', big:'No offer', why:'A hard knockout is not a risk judgement. No score was used and no later layer ran, which is what makes the decision fast and easy to explain. This is the only path with no offer at the end.',
     json:[['decision','DECLINE'],['bindingConstraint','layer_1'],['reasonCode','RC-103'],['approvedLimit','null']] },
 ];
 
@@ -687,7 +781,7 @@ const io = new IntersectionObserver(es => es.forEach(e => {
   if (!e.isIntersecting) return;
   reveal(e.target); io.unobserve(e.target);
 }), { threshold:0.01, rootMargin:'0px 0px -40px 0px' });
-const revealable = document.querySelectorAll('.lrow, .panel, .mcard, .stage');
+const revealable = document.querySelectorAll('.lrow, .panel, .mcard, .stage, .path');
 revealable.forEach(el => io.observe(el));
 // Safety net: nothing stays invisible, whatever the observer does.
 setTimeout(() => revealable.forEach(reveal), 2500);
@@ -737,10 +831,10 @@ function stop(){
 picker.addEventListener('click', e => {
   const b = e.target.closest('[data-p]'); if (!b) return;
   who = +b.dataset.p; at = -1; paint(); run();
-  document.getElementById('s6').scrollIntoView({ behavior:'smooth', block:'start' });
+  document.getElementById('s7').scrollIntoView({ behavior:'smooth', block:'start' });
 });
 document.getElementById('play').addEventListener('click', () => {
-  document.getElementById('s6').scrollIntoView({ behavior:'smooth', block:'start' });
+  document.getElementById('s7').scrollIntoView({ behavior:'smooth', block:'start' });
   setTimeout(run, 450);
 });
 paint();

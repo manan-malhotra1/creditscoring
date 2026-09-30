@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Credit Scoring Engine: one page</title>
+<link rel="icon" type="image/svg+xml" href="../assets/sasai-favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#F2F4F7; --panel:#FFFFFF; --panel-2:#F8FAFC;
+  --line:#E4E7EC; --line-2:#F2F4F7;
+  --ink:#101828; --ink-2:#344054; --ink-3:#667085;
+  --accent:#144989; --accent-ink:#FFFFFF; --teal:#48C2CF;
+  --glow:rgba(20,73,137,.12);
+  --ok:#067647; --ok-bg:#ECFDF3; --ok-line:#ABEFC6;
+  --warn:#7A5B12; --warn-bg:#FFF8E6; --warn-line:#F5DFA5; --warn-ink:#FFFFFF;
+  --stop:#B42318; --stop-bg:#FEF3F2; --stop-line:#FECDCA; --stop-ink:#FFFFFF;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 6px 18px rgba(16,24,40,.05);
+}
+:root[data-theme="dark"] {
+  --bg:#080E1C; --panel:#101B33; --panel-2:#0C162B;
+  --line:#1E2E4F; --line-2:#17243E;
+  --ink:#F2F6FC; --ink-2:#BFD0E6; --ink-3:#8AA0C0;
+  --accent:#48C2CF; --accent-ink:#06223A;
+  --glow:rgba(72,194,207,.18);
+  --ok:#5FE3A1; --ok-bg:rgba(95,227,161,.10); --ok-line:rgba(95,227,161,.30);
+  --warn:#F5C860; --warn-bg:rgba(245,200,96,.10); --warn-line:rgba(245,200,96,.30); --warn-ink:#3D2E05;
+  --stop:#FF8A80; --stop-bg:rgba(255,138,128,.10); --stop-line:rgba(255,138,128,.30); --stop-ink:#4A0D08;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.3);
+}
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; }
+body {
+  background:var(--bg); color:var(--ink);
+  font-family:Montserrat, Arial, Helvetica, sans-serif; line-height:1.4;
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; min-height:100%;
+  transition:background .3s, color .3s;
+}
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+.mono { font-family:'IBM Plex Mono', ui-monospace, monospace; }
+
+/* header */
+.bar { display:flex; align-items:center; gap:14px; padding:12px 22px; border-bottom:1px solid var(--line); flex:none; }
+.bar img { display:block; width:86px; height:auto; }
+.bar .div { width:1px; height:22px; background:var(--line); }
+.bar h1 { margin:0; font-size:14px; font-weight:700; letter-spacing:-.1px; }
+.bar .sub { font-size:12px; color:var(--ink-3); }
+.bar .sp { margin-left:auto; display:flex; gap:8px; }
+.tbtn {
+  min-height:30px; padding:0 13px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--line); background:var(--panel); color:var(--ink-2);
+  font:600 11.5px Montserrat, Arial, sans-serif;
+}
+.tbtn:hover { border-color:var(--accent); color:var(--ink); }
+
+/* canvas */
+.sheet { flex:1; padding:14px 22px 14px 22px; display:flex; flex-direction:column; gap:10px; min-height:0; }
+.band-h {
+  display:flex; align-items:center; gap:9px; font:700 11.5px Montserrat;
+  letter-spacing:1.1px; text-transform:uppercase; color:var(--ink-3);
+}
+.band-h::after { content:''; flex:1; height:1px; background:var(--line); }
+.band-h b { color:var(--accent); font-weight:700; }
+
+/* the spine */
+.spine { display:flex; align-items:stretch; gap:0; }
+.node {
+  flex:1 1 0; min-width:0; background:var(--panel); border:1px solid var(--line);
+  border-radius:12px; padding:11px 13px; box-shadow:var(--shadow);
+}
+.node.k { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), var(--shadow); }
+.n-k { font:700 11.5px Montserrat; letter-spacing:.8px; text-transform:uppercase; color:var(--ink-3); }
+.n-h { font-size:13.5px; font-weight:700; margin:3px 0 4px 0; }
+.n-l { margin:0; padding:0; list-style:none; }
+.n-l li { font-size:11.5px; color:var(--ink-2); padding:1.5px 0 1.5px 11px; position:relative; }
+.n-l li::before { content:''; position:absolute; left:1px; top:8px; width:4px; height:4px; border-radius:50%; background:var(--teal); }
+.n-l li b { color:var(--ink); }
+.arr { flex:0 0 32px; position:relative; }
+.arr i { position:absolute; left:0; right:0; top:50%; height:2px; background:var(--line); }
+.arr s {
+  position:absolute; top:calc(50% - 3px); width:6px; height:6px; border-radius:50%;
+  background:var(--teal); box-shadow:0 0 8px var(--teal); animation:go 2.4s linear infinite;
+}
+.arr s:nth-of-type(2){ animation-delay:.8s; } .arr s:nth-of-type(3){ animation-delay:1.6s; }
+@keyframes go { from{left:-6px;opacity:0} 15%{opacity:1} 85%{opacity:1} to{left:100%;opacity:0} }
+
+/* routes */
+.routes { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+.rt { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+      border-radius:12px; padding:11px 14px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:7px; }
+.rt.t { border-left-color:var(--teal); } .rt.n { border-left-color:#F5C860; }
+.rt-top { display:flex; align-items:baseline; gap:8px; }
+.rt-h { font-size:13.5px; font-weight:700; }
+.rt-tag { font:700 11.5px Montserrat; letter-spacing:.5px; color:var(--ink-3); margin-left:auto; }
+.rt-p { font-size:11.5px; color:var(--ink-2); margin:0; }
+.rt-p b { color:var(--ink); }
+.mini { display:flex; gap:3px; align-items:flex-end; height:34px; }
+.mini span { flex:1; border-radius:3px 3px 0 0; background:linear-gradient(180deg,var(--teal),var(--accent)); min-height:3px; }
+.mini.cap span:last-child { background:linear-gradient(180deg,#F5C860,#E8A317); }
+.ramp { display:flex; height:34px; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
+.ramp span { display:flex; align-items:center; justify-content:center; font:700 11.5px Montserrat; }
+.stair { display:flex; gap:4px; align-items:flex-end; height:34px; }
+.stair span { flex:1; border-radius:3px 3px 0 0; background:linear-gradient(180deg,var(--teal),var(--accent)); min-height:4px; }
+.stair span:last-child { background:linear-gradient(180deg,#F5C860,#E8A317); }
+.rt-foot { font-size:11.5px; color:var(--ink-3); margin-top:auto; }
+
+/* layers */
+.lrow { display:flex; gap:7px; }
+.L {
+  flex:1 1 0; min-width:0; background:var(--panel); border:1px solid var(--line);
+  border-top:3px solid var(--accent); border-radius:11px; padding:9px 10px; box-shadow:var(--shadow);
+  display:flex; flex-direction:column; gap:3px;
+}
+.L.stop { border-top-color:var(--stop); } .L.cut { border-top-color:var(--warn); } .L.route { border-top-color:var(--teal); }
+.L-n { font:700 11.5px 'IBM Plex Mono', monospace; color:var(--accent-ink); background:var(--accent);
+       align-self:flex-start; padding:1px 7px; border-radius:5px; }
+.L.stop .L-n { background:var(--stop); color:var(--stop-ink); }
+.L.cut  .L-n { background:var(--warn); color:var(--warn-ink); }
+.L.route .L-n{ background:var(--teal); color:#06223A; }
+.L-h { font-size:12px; font-weight:700; line-height:1.25; }
+.L-c { font:600 11.5px 'IBM Plex Mono', monospace; color:var(--ink-3); margin-top:auto; }
+
+/* limit */
+.limit { display:grid; grid-template-columns:1.25fr .75fr; gap:12px; }
+.caps { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; box-shadow:var(--shadow); }
+.cap { display:grid; grid-template-columns:150px 1fr 66px; gap:10px; align-items:center; padding:2.5px 0; }
+.cap-l { font-size:11.5px; color:var(--ink-2); }
+.cap-t { height:14px; background:var(--line-2); border-radius:5px; overflow:hidden; }
+.cap-f { display:block; height:14px; border-radius:5px; background:linear-gradient(90deg,var(--teal),var(--accent)); }
+.cap.bind .cap-f { background:linear-gradient(90deg,#F5C860,#E8A317); }
+.cap-v { font:600 12px 'IBM Plex Mono', monospace; text-align:right; }
+.cap.bind .cap-v { color:var(--warn); }
+.f-note { margin-top:8px; padding-top:8px; border-top:1px solid var(--line-2);
+          font:500 11.5px 'IBM Plex Mono', monospace; color:var(--ink-3); text-align:center; }
+.f-note b { color:var(--accent); }
+.out { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; box-shadow:var(--shadow); }
+.out h4 { margin:0 0 6px 0; font:700 11.5px Montserrat; letter-spacing:1px; text-transform:uppercase; color:var(--ink-3); }
+.out .row { display:flex; justify-content:space-between; gap:10px; font:500 11.5px 'IBM Plex Mono', monospace; padding:2px 0; }
+.out .row span:first-child { color:var(--ink-3); }
+.out .row span:last-child { color:var(--ink); font-weight:600; }
+
+/* who sets what */
+.own { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.ow { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:11px 14px; box-shadow:var(--shadow); border-top:3px solid var(--stop); }
+.ow.b { border-top-color:var(--ok); }
+.ow h4 { margin:0 0 2px 0; font-size:12.5px; font-weight:700; }
+.ow p { margin:0 0 7px 0; font-size:11.5px; color:var(--ink-3); }
+.tags { display:flex; flex-wrap:wrap; gap:5px; }
+.tag { font:600 11.5px Montserrat; padding:2px 8px; border-radius:999px;
+       background:var(--panel-2); border:1px solid var(--line); color:var(--ink-2); }
+.tag b { color:var(--ink); }
+
+@media (max-width:1100px){
+  .spine { flex-wrap:wrap; } .arr { flex-basis:100%; height:22px; }
+  .arr i { left:50%; right:auto; top:0; bottom:0; width:2px; height:auto; }
+  .arr s { animation:gov 2.4s linear infinite; left:calc(50% - 3px); }
+  @keyframes gov { from{top:-6px;opacity:0} 15%{opacity:1} 85%{opacity:1} to{top:100%;opacity:0} }
+  .lrow { flex-wrap:wrap; } .L { flex-basis:calc(25% - 6px); }
+  .limit,.own,.routes { grid-template-columns:1fr; }
+}
+@media (prefers-reduced-motion:reduce){ .arr s { animation:none; opacity:.55; left:42%; } }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <img id="logo" src="../assets/sasai-logo-reversed.svg" alt="Sasai" />
+  <div class="div"></div>
+  <div>
+    <h1>Ecocash Credit Scoring Engine</h1>
+    <div class="sub">Layer A scores. Layer B decides. One page.</div>
+  </div>
+  <div class="sp">
+    <a class="tbtn" href="../how-it-works/" style="text-decoration:none;display:inline-flex;align-items:center;">Full walkthrough</a>
+    <button class="tbtn" id="theme"><span id="tt">Light</span></button>
+  </div>
+</div>
+
+<div class="sheet">
+
+  <div class="band-h"><b>1</b> Data in, once a night</div>
+  <div class="spine">
+    <div class="node">
+      <div class="n-k">Ecocash files</div>
+      <div class="n-h">Daily drop</div>
+      <ul class="n-l">
+        <li><b>kashagi/</b> disbursements, repayments</li>
+        <li><b>demographics/</b> identity, KYC</li>
+        <li><b>transactions/</b> wallet activity</li>
+      </ul>
+    </div>
+    <div class="arr"><i></i><s></s><s></s><s></s></div>
+    <div class="node">
+      <div class="n-k">Azure Fabric</div>
+      <div class="n-h">Bronze to Gold</div>
+      <ul class="n-l">
+        <li><b>Bronze</b> raw, never edited</li>
+        <li><b>Silver</b> cleaned, de-duplicated</li>
+        <li><b>Gold</b> the only thing served</li>
+      </ul>
+    </div>
+    <div class="arr"><i></i><s></s><s></s><s></s></div>
+    <div class="node">
+      <div class="n-k">Feature engineering</div>
+      <div class="n-h">122 features</div>
+      <ul class="n-l">
+        <li>Inflow, outflow <b>30/90/180/365d</b></li>
+        <li>Active days, balance, cash flow</li>
+        <li>Loan history, arrears, exposure</li>
+      </ul>
+    </div>
+    <div class="arr"><i></i><s></s><s></s><s></s></div>
+    <div class="node k">
+      <div class="n-k">Layer A</div>
+      <div class="n-h">One score, 0 to 100</div>
+      <ul class="n-l">
+        <li><b>CatBoost</b> model, SHAP top 5</li>
+        <li><b>Points model</b>, 8 weighted parts</li>
+        <li>Both enter the same band table</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="band-h"><b>2</b> Which route the customer takes, decided at L0</div>
+  <div class="routes">
+    <div class="rt">
+      <div class="rt-top"><span class="rt-h">Scored</span><span class="rt-tag">model</span></div>
+      <p class="rt-p">Enough history for the model to rank them. Bands <b>A to E</b> set the offer,
+        up to the full <b>$500</b> product maximum.</p>
+      <div class="ramp" id="ramp"></div>
+      <div class="rt-foot">The normal path. Everything in Layer B applies in full.</div>
+    </div>
+    <div class="rt t">
+      <div class="rt-top"><span class="rt-h">Thin file</span><span class="rt-tag">fallback scorecard</span></div>
+      <p class="rt-p">Too little for the model. <b>Eight observed signals</b> score on points onto the same
+        0 to 100 scale: balance 20, tenure 15, active days 15, cash-flow days 15, transactions 10,
+        minimum balance 10, inflow regularity 10, KYC 5.</p>
+      <div class="mini cap" id="mini"></div>
+      <div class="rt-foot">Capped at <b>band C</b>. Starter limit <b>$50</b>.</div>
+    </div>
+    <div class="rt n">
+      <div class="rt-top"><span class="rt-h">No file</span><span class="rt-tag">starter and ladder</span></div>
+      <p class="rt-p"><b>Not rejected.</b> Starts at <b>$30</b> over 3 months with a 30% deposit.
+        Every loan repaid in full raises the limit by <b>half again</b>.</p>
+      <div class="stair" id="stair"></div>
+      <div class="rt-foot">Ceiling <b>$250</b>, then normal band scoring.</div>
+    </div>
+  </div>
+
+  <div class="band-h"><b>3</b> Layer B: eight layers, first to decide wins</div>
+  <div class="lrow" id="layers"></div>
+
+  <div class="band-h"><b>4</b> The amount is selected, not calculated</div>
+  <div class="limit">
+    <div class="caps" id="caps"></div>
+    <div class="out">
+      <h4>What the API returns</h4>
+      <div class="row"><span>decision</span><span>APPROVE</span></div>
+      <div class="row"><span>band</span><span>B</span></div>
+      <div class="row"><span>approvedLimit</span><span>390</span></div>
+      <div class="row"><span>tenure</span><span>6 months</span></div>
+      <div class="row"><span>deposit</span><span>10%</span></div>
+      <div class="row"><span>bindingConstraint</span><span>layer_4</span></div>
+      <div class="row"><span>reasonCodes</span><span>ranked</span></div>
+    </div>
+  </div>
+
+  <div class="band-h"><b>5</b> Who sets what</div>
+  <div class="own">
+    <div class="ow">
+      <h4>Layer A, fixed until a retrain</h4>
+      <p>A data science change, with its own validation.</p>
+      <div class="tags">
+        <span class="tag"><b>122</b> features</span><span class="tag">learned weights</span>
+        <span class="tag">CatBoost_V01_08092026</span><span class="tag">nightly batch</span>
+      </div>
+    </div>
+    <div class="ow b">
+      <h4>Layer B, the credit team, same day</h4>
+      <p>65 rules, each a value in the engine. No release needed.</p>
+      <div class="tags">
+        <span class="tag">cutoff <b>35</b></span><span class="tag">bands <b>A to E</b></span>
+        <span class="tag">instalment cap <b>25%</b></span><span class="tag">income floor <b>$50</b></span>
+        <span class="tag">product max <b>$500</b></span><span class="tag">exposure cap <b>$750</b></span>
+        <span class="tag">starter <b>$30 / $50</b></span><span class="tag">ladder <b>+50%</b></span>
+        <span class="tag">kill switch</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const root = document.documentElement, tb = document.getElementById('theme'),
+      tt = document.getElementById('tt'), logo = document.getElementById('logo');
+function setTheme(t){
+  root.setAttribute('data-theme', t);
+  tt.textContent = t === 'dark' ? 'Light' : 'Dark';
+  tb.setAttribute('aria-label','Switch to ' + (t === 'dark' ? 'light' : 'dark') + ' theme');
+  logo.src = t === 'dark' ? '../assets/sasai-logo-reversed.svg' : '../assets/sasai-logo.svg';
+  try { localStorage.setItem('ov-theme', t); } catch(e){}
+}
+let saved=null; try { saved = localStorage.getItem('ov-theme'); } catch(e){}
+setTheme(saved || 'dark');
+tb.addEventListener('click', () => setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
+
+/* The eight scorecard weights, as points out of 100. */
+document.getElementById('mini').innerHTML =
+  [20,15,15,15,10,10,10,5].map(v => `<span style="height:${(v/20)*100}%" title="${v} points"></span>`).join('');
+
+/* The ladder: $30, rising 50% each repaid cycle, capped at $250. */
+const rungs = []; let a = 30;
+for (let i = 0; i < 6; i++) { rungs.push(Math.min(Math.round(a), 250)); a *= 1.5; }
+document.getElementById('stair').innerHTML =
+  rungs.map(v => `<span style="height:${Math.max(11,(v/250)*100)}%" title="$${v}"></span>`).join('');
+
+/* Bands on the 0 to 100 scale, drawn to width. Ink is picked from the fill. */
+const BANDS = [['E',0,30,'#4E5A70'],['D',30,50,'#9BD4DE'],['C',50,70,'#48C2CF'],
+               ['B',70,85,'#2E7BB0'],['A',85,100,'#144989']];
+const inkOn = h => {
+  const c = [1,3,5].map(i => parseInt(h.slice(i,i+2),16)/255)
+    .map(v => v <= .03928 ? v/12.92 : Math.pow((v+.055)/1.055, 2.4));
+  return ((.2126*c[0] + .7152*c[1] + .0722*c[2]) + .05) / .05 > 4.6 ? '#06223A' : '#FFFFFF';
+};
+document.getElementById('ramp').innerHTML = BANDS.map(([b,lo,hi,c]) =>
+  `<span style="flex-grow:${hi-lo};background:${c};color:${inkOn(c)}" title="${b}: ${lo} to ${hi}">${b}</span>`).join('');
+
+/* Layer B. No referral state: every layer either lets it through or decides. */
+const LAYERS = [
+  ['L0','Data sufficiency','route',7],  ['L1','Hard knockouts','stop',11],
+  ['L2','Fraud screens','stop',6],      ['L3','Score bands','cut',7],
+  ['L3a','Scorecard and ladder','route',18], ['L4','Affordability','cut',10],
+  ['L5','Exposure and limits','cut',6], ['L6','Portfolio controls','stop',6],
+];
+document.getElementById('layers').innerHTML = LAYERS.map(([n,h,k,c]) => `
+  <div class="L ${k}"><span class="L-n">${n}</span><span class="L-h">${h}</span>
+  <span class="L-c">${c} rules</span></div>`).join('');
+
+/* Every cap that applies; the lowest one wins. */
+const CAPS = [['Band limit','L3',450],['Affordability','L4',390],['Product maximum','L5',500],
+              ['Exposure headroom','L5',750],['Device tier cap','L5',null]];
+const MAX = 750;
+document.getElementById('caps').innerHTML = CAPS.map(([l,s,v]) => `
+  <div class="cap${v===390?' bind':''}">
+    <span class="cap-l">${l} <span class="mono" style="opacity:.6">${s}</span></span>
+    <span class="cap-t">${v===null?'':`<span class="cap-f" style="width:${(v/MAX)*100}%"></span>`}</span>
+    <span class="cap-v">${v===null?'n/a':'$'+v}</span>
+  </div>`).join('')
+  + `<div class="f-note">final limit = <b>MIN</b> ( every cap above ) = <b>$390</b></div>`;
+</script>
+</body>
+</html>
