@@ -44,7 +44,7 @@ body {
 .mono { font-family:'IBM Plex Mono', ui-monospace, monospace; }
 
 /* header */
-.bar { display:flex; align-items:center; gap:14px; padding:12px 22px; border-bottom:1px solid var(--line); flex:none; }
+.bar { display:flex; align-items:center; gap:14px; padding:10px 22px; border-bottom:1px solid var(--line); flex:none; }
 .bar img { display:block; width:86px; height:auto; }
 .bar .div { width:1px; height:22px; background:var(--line); }
 .bar h1 { margin:0; font-size:14px; font-weight:700; letter-spacing:-.1px; }
@@ -58,7 +58,7 @@ body {
 .tbtn:hover { border-color:var(--accent); color:var(--ink); }
 
 /* canvas */
-.sheet { flex:1; padding:14px 22px 14px 22px; display:flex; flex-direction:column; gap:10px; min-height:0; }
+.sheet { flex:1; padding:12px 22px; display:flex; flex-direction:column; gap:9px; min-height:0; }
 .band-h {
   display:flex; align-items:center; gap:9px; font:700 11.5px Montserrat;
   letter-spacing:1.1px; text-transform:uppercase; color:var(--ink-3);
@@ -79,6 +79,14 @@ body {
 .n-l li { font-size:11.5px; color:var(--ink-2); padding:1.5px 0 1.5px 11px; position:relative; }
 .n-l li::before { content:''; position:absolute; left:1px; top:8px; width:4px; height:4px; border-radius:50%; background:var(--teal); }
 .n-l li b { color:var(--ink); }
+.tier {
+  margin-top:7px; padding-top:6px; border-top:1px dashed var(--line);
+  display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--ink-3);
+}
+.tier .pip { width:9px; height:9px; border-radius:2px; flex:none; }
+.tier b { color:var(--ink); }
+.node { display:flex; flex-direction:column; }
+.node .n-l { flex:1; }
 .arr { flex:0 0 32px; position:relative; }
 .arr i { position:absolute; left:0; right:0; top:50%; height:2px; background:var(--line); }
 .arr s {
@@ -91,7 +99,7 @@ body {
 /* routes */
 .routes { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .rt { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
-      border-radius:12px; padding:11px 14px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:7px; }
+      border-radius:12px; padding:10px 14px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:7px; }
 .rt.t { border-left-color:var(--teal); } .rt.n { border-left-color:#F5C860; }
 .rt-top { display:flex; align-items:baseline; gap:8px; }
 .rt-h { font-size:13.5px; font-weight:700; }
@@ -182,36 +190,39 @@ body {
 
 <div class="sheet">
 
-  <div class="band-h"><b>1</b> Data in, once a night</div>
+  <div class="band-h"><b>1</b> Data in, once a night. Each stage reads the tier on its left and writes the one named inside it</div>
   <div class="spine">
     <div class="node">
-      <div class="n-k">Ecocash files</div>
-      <div class="n-h">Daily drop</div>
+      <div class="n-k">The drop</div>
+      <div class="n-h">Ecocash files</div>
       <ul class="n-l">
         <li><b>kashagi/</b> disbursements, repayments</li>
         <li><b>demographics/</b> identity, KYC</li>
         <li><b>transactions/</b> wallet activity</li>
       </ul>
+      <div class="tier"><span class="pip" style="background:#CD7F32"></span>lands in <b>Bronze</b>, raw</div>
     </div>
     <div class="arr"><i></i><s></s><s></s><s></s></div>
     <div class="node">
-      <div class="n-k">Azure Fabric</div>
-      <div class="n-h">Bronze to Gold</div>
+      <div class="n-k">Stage 1</div>
+      <div class="n-h">Data cleaning</div>
       <ul class="n-l">
-        <li><b>Bronze</b> raw, never edited</li>
-        <li><b>Silver</b> cleaned, de-duplicated</li>
-        <li><b>Gold</b> the only thing served</li>
+        <li>Individuals only, USD only</li>
+        <li>Merchant-scale accounts excluded</li>
+        <li>Keyed by content hash, not loan id</li>
       </ul>
+      <div class="tier"><span class="pip" style="background:#9AA5B1"></span>writes <b>Silver</b>, de-duplicated</div>
     </div>
     <div class="arr"><i></i><s></s><s></s><s></s></div>
     <div class="node">
-      <div class="n-k">Feature engineering</div>
-      <div class="n-h">122 features</div>
+      <div class="n-k">Stages 2 and 3</div>
+      <div class="n-h">Feature engineering</div>
       <ul class="n-l">
         <li>Inflow, outflow <b>30/90/180/365d</b></li>
         <li>Active days, balance, cash flow</li>
         <li>Loan history, arrears, exposure</li>
       </ul>
+      <div class="tier"><span class="pip" style="background:#E8B923"></span>writes <b>Gold</b>, 122 features</div>
     </div>
     <div class="arr"><i></i><s></s><s></s><s></s></div>
     <div class="node k">
