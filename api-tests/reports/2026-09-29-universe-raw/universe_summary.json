@@ -1,0 +1,206 @@
+{
+  "universe20k.jsonl": {
+    "label": "Ecocash universe (random Individuals)",
+    "n": 20000,
+    "http": {
+      "404": 19326,
+      "201": 440,
+      "502": 114,
+      "500": 120
+    },
+    "assessed": 440,
+    "coverage": 2.1999999999999997,
+    "coverage_ci": [
+      2.005699287695064,
+      2.412660033846454
+    ],
+    "decisions": {
+      "DECLINE": 227,
+      "REFER": 50,
+      "APPROVE": 163
+    },
+    "routing": {
+      "THIN_FILE": 121,
+      "SCORED": 220,
+      "NO_FILE": 99
+    },
+    "approvals": 163,
+    "rate_of_assessed": 37.04545454545455,
+    "rate_of_sampled": 0.815,
+    "limits": {
+      "10": 4,
+      "20": 121,
+      "30": 26,
+      "40": 5,
+      "50": 4,
+      "70": 2,
+      "150": 1
+    },
+    "total": 3930,
+    "mean": 24.11042944785276,
+    "median": 20,
+    "min": 10,
+    "max": 150,
+    "p90": 30.0,
+    "bands": {
+      "C": 72,
+      "ladder": 51,
+      "B": 27,
+      "A": 13
+    },
+    "tenure": {
+      "4": 72,
+      "3": 51,
+      "6": 40
+    },
+    "deposit": {
+      "20": 72,
+      "30": 51,
+      "10": 27,
+      "0": 13
+    },
+    "blockers": {
+      "minimum_monthly_income": 112,
+      "prior_default_lookback": 54,
+      "income_stability_requirement": 46,
+      "minimum_viable_limit": 7,
+      "maximum_age_at_maturity": 4,
+      "concurrent_loan_cap": 4
+    }
+  },
+  "borrowers5k.jsonl": {
+    "label": "Known borrowers (Arttha repayment file)",
+    "n": 5000,
+    "http": {
+      "201": 4733,
+      "404": 62,
+      "502": 10,
+      "500": 195
+    },
+    "assessed": 4733,
+    "coverage": 94.66,
+    "coverage_ci": [
+      94.00181318445556,
+      95.24961315965574
+    ],
+    "decisions": {
+      "APPROVE": 1792,
+      "DECLINE": 2494,
+      "REFER": 447
+    },
+    "routing": {
+      "SCORED": 2344,
+      "NO_FILE": 1058,
+      "THIN_FILE": 1331
+    },
+    "approvals": 1792,
+    "rate_of_assessed": 37.86182125501796,
+    "rate_of_sampled": 35.839999999999996,
+    "limits": {
+      "10": 51,
+      "20": 1323,
+      "30": 281,
+      "40": 81,
+      "50": 29,
+      "60": 9,
+      "70": 6,
+      "80": 3,
+      "90": 1,
+      "100": 1,
+      "110": 2,
+      "120": 1,
+      "150": 1,
+      "170": 3
+    },
+    "total": 42480,
+    "mean": 23.705357142857142,
+    "median": 20.0,
+    "min": 10,
+    "max": 170,
+    "p90": 30.0,
+    "bands": {
+      "B": 328,
+      "ladder": 605,
+      "C": 746,
+      "A": 113
+    },
+    "tenure": {
+      "6": 441,
+      "3": 605,
+      "4": 746
+    },
+    "deposit": {
+      "10": 328,
+      "30": 605,
+      "20": 746,
+      "0": 113
+    },
+    "blockers": {
+      "minimum_monthly_income": 1195,
+      "income_stability_requirement": 551,
+      "prior_default_lookback": 540,
+      "minimum_viable_limit": 110,
+      "concurrent_loan_cap": 51,
+      "maximum_age_at_maturity": 31,
+      "minimum_age": 16
+    }
+  },
+  "pilot_c5.jsonl": {
+    "label": "Pilot (universe, n=1000)",
+    "n": 1000,
+    "http": {
+      "404": 965,
+      "500": 18,
+      "201": 16,
+      "502": 1
+    },
+    "assessed": 16,
+    "coverage": 1.6,
+    "coverage_ci": [
+      0.9872155867426248,
+      2.583228196419978
+    ],
+    "decisions": {
+      "DECLINE": 9,
+      "APPROVE": 7
+    },
+    "routing": {
+      "NO_FILE": 5,
+      "SCORED": 8,
+      "THIN_FILE": 3
+    },
+    "approvals": 7,
+    "rate_of_assessed": 43.75,
+    "rate_of_sampled": 0.7000000000000001,
+    "limits": {
+      "20": 6,
+      "30": 1
+    },
+    "total": 150,
+    "mean": 21.428571428571427,
+    "median": 20,
+    "min": 20,
+    "max": 30,
+    "p90": 30,
+    "bands": {
+      "C": 4,
+      "ladder": 2,
+      "B": 1
+    },
+    "tenure": {
+      "4": 4,
+      "3": 2,
+      "6": 1
+    },
+    "deposit": {
+      "20": 4,
+      "30": 2,
+      "10": 1
+    },
+    "blockers": {
+      "minimum_monthly_income": 5,
+      "income_stability_requirement": 3,
+      "prior_default_lookback": 1
+    }
+  }
+}

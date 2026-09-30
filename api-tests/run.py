@@ -108,12 +108,24 @@ print(f"{D}base     {BASE}\ntenant   {TENANT}\nproduct  {PRODUCT}\ncustomer {CUS
 head(1, "Service is up")
 call('GET', '/health', expect=200, note='no key needed')
 
-head(2, "Endpoints the guide documents but staging does not serve")
-# The guide makes POST /product-profiles step 1 of the quick start. It is not
-# routed on this deployment, so this check is expected to fail today and will
-# start passing on its own once the module is deployed.
-call('POST', '/product-profiles', {'tenantId': TENANT, 'productCode': PRODUCT},
-     expect=(200, 201), note='guide step 1, section 4.1 (known gap)')
+head(2, "Create a product profile")
+# Guide step 1, section 4.1. This build requires an ACTIVE product profile
+# before a rule set can be created, so this is now the first real step rather
+# than the known gap it used to be.
+#
+# It runs on a throwaway tenant. POST /product-profiles does not supersede the
+# existing profile for the tenant it names, it adds another ACTIVE one beside
+# it (legacy carries six as of 2026-09-29), so running this against a shared
+# tenant quietly changes which profile assessments bind to.
+DIAG = f'mm-probe-{int(time.time())}'
+st, prof = call('POST', '/product-profiles', {
+    'tenantId': DIAG, 'productCode': PRODUCT,
+    'productMaximum': 500, 'minimumViableLimit': 30, 'totalCustomerExposureCap': 750,
+    'limitRoundingIncrement': 10, 'permittedTenures': [3, 4, 6], 'depositFloorPct': 0,
+}, expect=(200, 201), note='on a throwaway tenant, not ' + TENANT)
+profile_id = prof.get('id') if isinstance(prof, dict) else None
+if isinstance(prof, dict):
+    dump(prof, ['id', 'status', 'revision', 'values'])
 
 head(3, "Read the rule frame: what are the defaults?")
 st, frame = call('GET', f'/rule-versions/frame?tenantId={TENANT}&productCode={PRODUCT}',
@@ -125,24 +137,27 @@ if st == 200 and isinstance(frame, dict):
           f"layers={len(frame.get('layers', []))}  "
           f"rules={sum(len(l.get('rules', [])) for l in frame.get('layers', []))}{X}")
 
-head(4, "Does productProfile survive a round trip?")
-# The spec documents productProfile on CreateRuleVersionDto and the service
-# accepts it, but check that it is actually stored: if it is dropped, nothing
-# can populate decision.product_profile_id and every assessment fails.
-DIAG = f'mm-probe-{int(time.time())}'
+head(4, "A rule set can be created once the profile exists")
+# On this build the profile is no longer passed inline on CreateRuleVersionDto;
+# the rule set binds to whatever profile is ACTIVE for the tenant and product.
+# Creating one on the throwaway tenant proves that ordering works end to end.
 st, probe = call('POST', '/rule-versions', {
-    'tenantId': DIAG, 'productCode': PRODUCT, 'label': 'productProfile probe',
-    'productProfile': {'productMaximum': 500, 'minimumViableLimit': 30,
-                       'totalCustomerExposureCap': 750, 'limitRoundingIncrement': 10,
-                       'permittedTenures': [3, 4, 6], 'depositFloorPct': 0},
-}, expect=(200, 201), note='on a throwaway tenant, not ' + TENANT)
-kept = isinstance(probe, dict) and probe.get('productProfile') is not None
-results.append((kept, 'productProfile is persisted, not dropped',
-                'null' if not kept else 'stored', 'the object sent', ''))
-print(f"       {(G + 'ok' + X) if kept else (R + 'FAIL' + X)} "
-      f"productProfile came back as {json.dumps(probe.get('productProfile')) if isinstance(probe, dict) else '?'}")
+    'tenantId': DIAG, 'productCode': PRODUCT, 'label': 'rule set for the probe profile',
+}, expect=(200, 201), note='same throwaway tenant, profile created in step 2')
+if isinstance(probe, dict):
+    dump(probe, ['id', 'status', 'revision'])
+    print(f"       {D}seeded {len(probe.get('rules') or [])} rules{X}")
+st, profs = call('GET', f'/product-profiles?tenantId={DIAG}', expect=200,
+                 note='the profile is readable and still ACTIVE')
+active = [p for p in profs if isinstance(p, dict) and p.get('status') == 'ACTIVE'] \
+    if isinstance(profs, list) else []
+ok_active = any(p.get('id') == profile_id for p in active)
+results.append((ok_active, 'the profile created in step 2 is ACTIVE',
+                (active[0].get('id') if active else 'none'), profile_id, ''))
+print(f"       {(G + 'ok' + X) if ok_active else (R + 'FAIL' + X)} "
+      f"{len(active)} ACTIVE profile(s) on {DIAG}")
 
-head(5, "Create a rule set (profile travels with it on this build)")
+head(5, "Create a rule set on the real tenant")
 rule_version_id = None
 if not WRITES:
     print(f"       {Y}skipped{X} {D}would supersede the ACTIVE rule set for tenant "
@@ -183,6 +198,13 @@ if isinstance(dec, dict) and decision_id:
     for c in (dec.get('reasonCodes') or [])[:8]:
         print(f"         {json.dumps(c)[:100]}")
     print(f"       {D}versions: {json.dumps(dec.get('versions'))[:150]}{X}")
+    # The null constraint on decision.product_profile_id is what broke every
+    # assessment on the previous build, so assert the link is really populated.
+    ppid = (dec.get('versions') or {}).get('productProfileId')
+    results.append((bool(ppid), 'the decision is linked to a product profile',
+                    ppid or 'null', 'a profile id', ''))
+    print(f"       {(G + 'ok' + X) if ppid else (R + 'FAIL' + X)} "
+          f"versions.productProfileId = {ppid}")
 
 if decision_id:
     head(7, "Re-read the stored decision")
@@ -209,15 +231,16 @@ if decision_id:
 
 head(10, "Change a rule, then assess again")
 rid = None
-if not WRITES:
-    print(f"       {Y}skipped{X} {D}would change the live rules for tenant '{TENANT}'{X}")
-    frame = {}
 if isinstance(frame, dict):
     for layer in frame.get('layers', []):
         for r in layer.get('rules', []):
             if r.get('key') == 'minimum_age':
                 rid = r.get('id')
-if rid:
+if not WRITES:
+    print(f"       {Y}skipped{X} {D}would change the live rules for tenant '{TENANT}'{X}")
+elif not rid:
+    print(f"       {Y}minimum_age not found in the frame, skipping{X}")
+else:
     call('PATCH', '/rule-versions/rules', {
         'tenantId': TENANT,
         'updates': [{'ruleId': rid, 'value': {'operator': 'gte', 'threshold': 99}}],
@@ -237,8 +260,6 @@ if rid:
         'tenantId': TENANT,
         'updates': [{'ruleId': rid, 'value': {'operator': 'gte', 'threshold': 18}}],
     }, expect=200, note='put minimum_age back to 18')
-else:
-    print(f"       {Y}minimum_age not found in the frame, skipping{X}")
 
 print(f"\n{B}Summary{X}")
 passed = sum(1 for r in results if r[0])
