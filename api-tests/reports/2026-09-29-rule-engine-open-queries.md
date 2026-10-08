@@ -6,11 +6,44 @@ Raised in **Brainstorming and status update**, 29 September 2026, 11:02, duratio
 * **Referenced but not present:** Rajneesh, Atul
 * **Ecocash QAT begins 4 October 2026**
 
+**Updated 8 October 2026** after a retest against the rebuilt engine. See Section J.
+
 Status key:
 
 * **Answered.** A clear answer was given.
 * **Partial.** Answered in part, or the answer raised a further question.
 * **Open.** Asked and not answered, or the answer was not acceptable.
+* **Fixed 8 Oct.** Verified resolved in the 8 October retest.
+
+---
+
+## Section 0. Status at 8 October 2026
+
+The engine was unavailable from 30 September until some point before 8 October. On 8 October it returns a new rule version `fea92de9-8bc9-405c-9c83-e5195b254afe` at revision 10, with 57 rules rather than 66, and a single ACTIVE product profile. The smoke test passes 11 of 11. Several register items are resolved.
+
+**Resolved and verified**
+
+| No. | Item | What changed |
+|---:|---|---|
+| 1 | F2, unknown fields accepted silently | Top level fields now return 400 naming each offending property |
+| 2 | E1, no units on parameters | Every rule now carries a `unit` field |
+| 3 | E7, KYC vocabulary mismatch | Raw levels now map to `fully_verified` and `not_fully_verified` |
+| 4 | F5, six ACTIVE profiles | One ACTIVE profile on `legacy` |
+| 5 | F4, thin file share cap deadlock | `max_thin_file_share_of_approvals` disabled |
+| 6 | C4, switch refer off | `referral_policy` present, fallbacks all decline |
+| 7 | C2, the USD 20 bulge | Gone. Median limit 50, maximum 270, genuine spread |
+| 8 | E5, `prior_default_lookback` units | Now `unit: months`, operator `gte`, threshold 0.5 |
+| 9 | E3, `currently_delinquent` units | Now `unit: days_past_due`, threshold 45 |
+
+**Measured effect on the same 300 customers used throughout**
+
+| Date | Approvals | Median limit | Maximum limit |
+|---|---:|---:|---:|
+| 29 September | 2 of 297 | 20 | 270 |
+| 30 September | 0 of 297 | n/a | n/a |
+| **8 October** | **50 of 297, 16.8%** | **50** | **270** |
+
+**New problems found in the retest.** Three, set out in Section J. One of them, the approval ranking inversion at J2, is more serious than anything in the original register.
 
 ---
 
@@ -113,7 +146,9 @@ This left ownership of the calibration undefined. It has since been settled on a
 1. An approval rate of 36.4% was achieved **without touching a single eligibility or fraud rule**, by correcting the affordability treatment described at C3 and restoring band C to approve as the current Starter Values document already specifies. Reaching 50% from that base is realistic once C3 is fixed.
 2. When the same target was approached by loosening risk rules instead, the additional approvals came **disproportionately from customers who had already gone overdue** on previous Ecocash loans, while approvals for customers who had repaid in full barely moved. The ratio of settled to overdue approvals fell from 1.66 to 1.44. We would prefer the 50% to be reached through correct affordability arithmetic rather than weaker eligibility screening.
 
-### C2. The USD 20 bulge. *Acknowledged, action on Technodysis*
+### C2. The USD 20 bulge. *Fixed 8 Oct*
+
+**Verified 8 October.** On the same 300 customers the limit distribution now spreads from 30 to 270 with a median of 50 and a mean of 80.8, against a median of 20 previously. The driver is the balance proxy: coefficient moved from 0.5 to 5 and intercept from 25 to 90. See J4, because that change is itself unexplained.
 
 Testing across 26,000 real customers shows a severe concentration:
 
@@ -124,7 +159,9 @@ Testing across 26,000 real customers shows a severe concentration:
 
 **Request C2.1.** Run the engine over 200,000 of the customer records already supplied and review the resulting limit distribution before QAT.
 
-### C3. Affordability is a monthly figure compared against a principal. *Open, highest priority*
+### C3. Affordability is a monthly figure compared against a principal. *Partial, still unconfirmed*
+
+**Position at 8 October.** `net_disposable_income_floor` is now 0 and `instalment_to_income_cap` is back to the documented 25%. Limits have risen, but that is explained by the balance proxy change at J4 rather than by any correction to the arithmetic. Questions C3.1 to C3.3 remain unanswered: we still do not know whether affordability is intended to cap the instalment or the principal.
 
 This is the root cause of C2.
 
@@ -159,7 +196,7 @@ Banding proposed 350. The engine approved 20.
 
 **Question C3.3.** When will this be corrected and retested?
 
-### C4. Refer should be switched off for launch. *Agreed, action on Technodysis*
+### C4. Refer should be switched off for launch. *Fixed 8 Oct*
 
 1. Rajneesh previously confirmed that refer is not a state we will operate initially, and that it would be switched off by configuration.
 2. In the deployed band table, band C and band D both route to refer.
@@ -207,7 +244,7 @@ A linear algebra explanation is not usable. The people configuring this are fina
 
 ## Section E. Features, parameters and definitions
 
-### E1. Master list of configurable parameters. *Agreed, action on Technodysis*
+### E1. Master list of configurable parameters. *Partial, units delivered 8 Oct*
 
 Kevin committed to producing a versioned Word document listing every rule in Layer B, what it does, why it is needed, and how it is calculated from the underlying features or raw data.
 
@@ -226,7 +263,7 @@ Kevin committed to producing a versioned Word document listing every rule in Lay
 
 **Question E2.3.** What is the agreed mechanism for notifying Ecocash when a design decision of this size is taken?
 
-### E3. `currently_delinquent`. *Open*
+### E3. `currently_delinquent`. *Partial, units delivered 8 Oct*
 
 1. The rules spreadsheet states it "reads `dpd_7_count` and turns it into a 0/1 flag: 1 if any previous loan ever went more than 7 DPD. It isn't current DPD."
 2. The rule is named "currently delinquent" and its documented unit is "days past due".
@@ -242,7 +279,7 @@ Kevin committed to producing a versioned Word document listing every rule in Lay
 
 **Question E4.1.** What does `previous_dpd_max` mean in plain English: maximum days past due, across what population of loans, and over what window?
 
-### E5. `prior_default_lookback` units. *Open*
+### E5. `prior_default_lookback` units. *Fixed 8 Oct*
 
 1. Documented as "days since last default, converted to months", unit Months.
 2. In live traces the observed values are 9, 25, 26, 28 and 63, against a condition of `{"months": 1}`.
@@ -260,7 +297,9 @@ Kevin committed to producing a versioned Word document listing every rule in Lay
 
 **Question E6.1.** Which is implemented, and which is intended?
 
-### E7. KYC status. *Partial, action on both sides*
+### E7. KYC status. *Fixed 8 Oct*
+
+**Verified 8 October.** `kyc_status` is now enabled and the observed value is `fully_verified` or `not_fully_verified` rather than a raw subscriber level. Across a 32 customer slice, 30 passed and 2 failed. Closed, with one caveat carried to J1: a null observed value is treated as a fail.
 
 Three vocabularies are in play and none of them match:
 
@@ -318,7 +357,9 @@ Five layer 1 knockouts are placeholders with no data, and all are disabled:
 
 **Question F1.4.** Will the engine have a dedicated environment for QAT, and for production?
 
-### F2. Unknown fields accepted silently. *Open, answer not accepted*
+### F2. Unknown fields accepted silently. *Fixed 8 Oct*
+
+**Verified 8 October.** Sending profile fields at the top level now returns 400 with `"property productMaximum should not exist"` and one line per offending property. Nested under `values` it returns 201. Closed.
 
 1. Sending profile values at the top level of the payload instead of nested under `values` returns HTTP 201 with defaults applied and no warning.
 2. Arshath's answer was that the rule structure is dynamic JSON with no structured validation, so unknown fields are accepted and errors surface later at decision time.
@@ -345,7 +386,9 @@ Intended design, per Rule Engine V version 2.1:
 
 **Question F3.2.** Has a customer ever been classified `NO_FILE` in testing? None was observed.
 
-### F4. Layer 6 thin file share cap deadlocks a new book. *Acknowledged, action on Technodysis*
+### F4. Layer 6 thin file share cap deadlocks a new book. *Addressed 8 Oct by disabling the cap*
+
+**Position at 8 October.** `max_thin_file_share_of_approvals` is now disabled, which removes the deadlock but also removes the control. The original request stands: apply a minimum approval volume floor so the cap can be switched back on without locking the book.
 
 1. `max_thin_file_share_of_approvals` is 40%, computed as a share of approvals.
 2. On a new tenant, if the first approval is a thin file customer, the share is 100% of 1.
@@ -355,7 +398,9 @@ Intended design, per Rule Engine V version 2.1:
 
 **Request F4.1.** Apply a minimum approval volume floor before the ratio is enforced, and confirm the floor value.
 
-### F5. Product profile lifecycle. *Open, not raised in the meeting*
+### F5. Product profile lifecycle. *Partial, duplicates cleaned 8 Oct*
+
+**Position at 8 October.** `legacy` now carries a single ACTIVE profile, so F5.1 is resolved. F5.2 is unchanged: there is still no route to delete or retire a profile, a rule set or a tenant.
 
 1. The `legacy` tenant currently holds six ACTIVE product profiles simultaneously.
 2. The Developer Guide states that creating a profile marks the previous one SUPERSEDED, and a clean test confirms that behaviour works correctly.
@@ -535,6 +580,15 @@ Charts are welcome but the underlying numbers must be supplied, because Ecocash 
 | 14 | Population statistics pack, coverage, income, limits, scoring, decisioning | G3 | Technodysis |
 | 15 | Default rate by band from the Kashagi history, to validate the band boundaries | G3, item 22 | Technodysis |
 | 16 | Confirm whether derived income and the balance proxy are computed correctly | G1 | Technodysis |
+| 17 | Define and document null handling for rules whose feature is missing | J1 | Technodysis |
+| 18 | Explain why `age` is null for 19.5% of customers | J1 | Technodysis |
+| 19 | Investigate the approval ranking inversion, settled against overdue | J2 | Technodysis |
+| 20 | Confirm the 30 day cooling period is intended policy, and whether it applies to data-driven declines | J3 | Ecocash, Technodysis |
+| 21 | Evidence for the new balance proxy coefficient of 5 and intercept of 90 | J4 | Technodysis |
+| 22 | Root cause and prevention for the 30 September outage | J5 | Technodysis, Yaswanth |
+| 23 | Confirm whether the thin file and no file ladder applies the layer 4 affordability gate | K4 | Technodysis |
+| 24 | Explain why band E repays better than bands C and D | K3 | Technodysis |
+| 25 | Agree launch treatment for customers who cannot be assessed | K4 | Ecocash, Technodysis |
 
 ---
 
@@ -553,3 +607,191 @@ All figures in this register come from testing against the staging engine on 28 
 | 3 | `2026-09-29-approval-rate-tuning.md` | Configuration reaching 36.4% approval |
 | 4 | `2026-09-29-C5-universe-run.md` | 21,000 universe customers, 5,000 borrowers |
 | 5 | `2026-09-29-C5-approved-limits.md` | Every approved limit and its binding cap |
+
+---
+
+## Section J. Found in the 8 October retest
+
+### J1. A missing age is treated as a failed age check. *Open, new, highest priority of the three*
+
+`minimum_age` is now the single largest decline reason, removing 58 of 297 customers, which is 19.5% of the sample.
+
+None of them is under 18. The observed value is null:
+
+```json
+{"key": "minimum_age", "action": "decline", "passed": false,
+ "condition": {"unit": "years", "operator": "gte", "threshold": 18},
+ "observedValue": null}
+```
+
+1. A missing feature is being evaluated as a failed hard knockout rather than as missing data.
+2. The same pattern appears on `kyc_status`, where a null observed value also fails.
+3. This is a general rule engine behaviour, not a problem with one rule, so it will affect every knockout whose feature is absent for a given customer.
+
+**Question J1.1.** What is the intended behaviour when a feature a rule depends on is null: fail the rule, pass it, or route the customer to the no file or thin file path?
+
+**Question J1.2.** Whichever is intended, where is it documented, and can a null be made visibly distinct from a genuine failure in the trace and the reason codes?
+
+**Question J1.3.** Why is `age` null for 19.5% of customers when date of birth is present in the identity data supplied?
+
+### J2. The engine now approves bad payers more often than good ones. *Open, new, most serious*
+
+On the same 300 customers, approval rate by actual repayment outcome on previous Ecocash loans:
+
+| No. | Repayment outcome | Approved | Rate |
+|---:|---|---:|---:|
+| 1 | SETTLED, repaid in full | 12 of 100 | **12.0%** |
+| 2 | ON_TERM, within term | 17 of 100 | 17.0% |
+| 3 | OVERDUE, past term with a balance | 21 of 97 | **21.6%** |
+
+The engine approves customers who went overdue at nearly twice the rate of customers who repaid in full. The ranking is monotonic in the wrong direction.
+
+This is a reversal. On 29 September, with the configuration described at C1, the same 300 customers produced 48.0% for settled against 28.9% for overdue, which is the correct ordering.
+
+**Question J2.1.** Was any part of the scoring or banding changed between 29 September and 8 October, beyond the rule values visible in the frame?
+
+**Question J2.2.** Has the model been validated against the Kashagi repayment history at any point? This is item 22 of the Section G data request and remains the single most important outstanding piece of evidence.
+
+**Question J2.3.** Which layer is producing the inversion? We can see the outcome but not the cause, because the scorecard and the model sit behind the trace.
+
+A credit engine that ranks risk backwards is worse than no engine, because it concentrates lending in exactly the population that has already demonstrated it does not repay. This should block QAT until it is understood.
+
+### J3. A declined customer cannot reapply for 30 days, and it is already firing. *Open, new*
+
+`cooling_period_after_decline` declined 40 of 297 customers in the retest.
+
+1. These are customers declined during earlier testing. The cooling period is working as configured.
+2. It means any tenant used for repeat testing produces progressively worse results, because each run declines customers and locks them out of the next.
+3. All future testing should therefore run on a clean tenant. The 50,000 customer run described in Section K does so.
+
+**Question J3.1.** Is a 30 day lockout after a decline the intended commercial policy for launch? It is currently inherited from a default rather than chosen.
+
+**Question J3.2.** Does the cooling period apply to every decline reason, including a decline caused by missing data such as J1? A customer declined because their age was null would be locked out for 30 days through no fault of their own.
+
+### J4. The balance proxy changed by an order of magnitude with no explanation. *Open, new, follows D1 and D2*
+
+| No. | Parameter | 29 September | 8 October | Change |
+|---:|---|---:|---:|---|
+| 1 | `balance_proxy_coefficient` | 0.5 | **5** | 10x |
+| 2 | `balance_proxy_intercept` | 25 | **90** | 3.6x |
+| 3 | `minimum_monthly_income` | 26.59 | **50** | |
+| 4 | `income_stability_requirement` | 0.585 | **1.5** | much looser |
+| 5 | `concurrent_loan_cap` | 6 | **10** | |
+| 6 | `currently_delinquent` | 2 | **45 days** | |
+
+Proxy income is now `90 + 5 x balance` rather than `25 + 0.5 x balance`. This is what moved the limits and resolved the USD 20 bulge, so the improvement at C2 rests entirely on it.
+
+Kevin described the earlier coefficient of 0.5 as a random value pending expert input. These replacements are rounder but no better evidenced.
+
+**Question J4.1.** On what basis were the coefficient and intercept set to 5 and 90? Has the regression described in the Starter Values document been run, or are these also provisional?
+
+**Question J4.2.** The Starter Values document instructs that until the regression runs, the proxy should return no figure so the customer declines visibly. The deployed system now does the opposite more aggressively than before. Is that a deliberate decision, and by whom?
+
+**Question J4.3.** Items 1 to 6 above are all material changes to lending policy made without notice. What is the agreed process for notifying Ecocash of a rule value change before it is deployed? This repeats E2.3.
+
+### J5. The engine was unavailable for an extended period. *Closed, but worth recording*
+
+1. From 30 September at about 10:58 UTC, every tenant returned 500 on `POST /decisions` and `GET /rule-versions/frame`, and `POST /product-profiles` returned 404.
+2. Server cause: `Error converting field "productProfile" of expected non-nullable type "Json", found incompatible value of "null"`.
+3. Seven `PATCH /rule-versions` calls landed between 08:25 and 09:13 UTC that morning.
+4. The outage spanned the planned QAT start date of 4 October.
+
+**Question J5.1.** What caused the outage, how long did it last, and what prevents a configuration change from taking the whole engine down again?
+
+**Question J5.2.** Is there a monitor that would have detected this, or was it found by us?
+
+---
+
+## Section K. The 50,000 customer verification run
+
+Commissioned 8 October on tenant `mm-clean-1791405365`, a clean tenant mirroring the live `legacy` configuration rule for rule, with no prior decline history so the cooling period at J3 cannot distort the result.
+
+1. **Population.** 50,000 customers drawn at random from the 230,304 unique numbers in the Arttha repayment file, so every customer has a known repayment outcome.
+2. **Composition.** 38,104 settled, 11,304 overdue, 592 within term, matching the population split of 76.5%, 22.4% and 1.1%.
+3. **Purpose.** To establish at scale whether the ranking inversion at J2 is real or an artefact of the 300 customer sample.
+4. **Measured throughput.** 5.0 assessments per second at 12 concurrent requests, with zero errors over a 400 customer calibration. This is an improvement on the 2.9 per second measured on 29 September and the errors reported at F1 did not recur.
+
+### K1. Headline
+
+| No. | Measure | Result |
+|---:|---|---|
+| 1 | Sampled | 50,000 |
+| 2 | Assessed | 49,467, which is 98.9% |
+| 3 | Approved | 9,782, which is **19.77%** |
+| 4 | Median limit | 50 |
+| 5 | Mean limit | 77.7 |
+| 6 | Maximum limit | 500, the product maximum |
+| 7 | Total book written | 760,520 |
+| 8 | Throughput | 6.5 per second at 12 concurrent, 1 error in 50,000 |
+
+Item 8 closes the stability half of F1. The transaction pool failures seen on 29 September did not recur.
+
+### K2. J2 confirmed. The ranking inversion is real and large
+
+| No. | Repayment outcome | Approved | Assessed | Rate | 95% CI |
+|---:|---|---:|---:|---:|---|
+| 1 | SETTLED, repaid in full | 7,003 | 37,833 | **18.51%** | 18.12% to 18.90% |
+| 2 | ON_TERM, within term | 107 | 589 | 18.17% | 15.26% to 21.48% |
+| 3 | OVERDUE, past term with a balance | 2,672 | 11,045 | **24.19%** | 23.40% to 25.00% |
+
+The confidence intervals for settled and overdue do not overlap. The engine approves customers who previously went overdue **31% more often** than customers who repaid in full. This is not a sampling artefact.
+
+### K3. The bands are not the problem
+
+Measured bad rate by band, using prior overdue status as the outcome:
+
+| No. | Band | Population | Bad rate | Approved | Avg limit |
+|---:|---|---:|---:|---:|---:|
+| 1 | A | 398 | 11.1% | 44.5% | 190.8 |
+| 2 | B | 1,309 | 15.0% | 39.8% | 191.4 |
+| 3 | C | 15,074 | 18.3% | 40.5% | 80.7 |
+| 4 | D | 3,414 | 23.7% | 0.0% | n/a |
+| 5 | **E** | 1,340 | **12.9%** | 0.0% | n/a |
+| 6 | Unscored | 27,932 | 25.3% | 10.7% | 45.1 |
+
+Bands A to D rank risk correctly and monotonically, 11.1% rising to 23.7%. That is a genuine improvement on 29 September, when band A was the worst performing band.
+
+**Band E breaks the ranking.** Its bad rate of 12.9% is better than bands C and D and close to band B, yet its score range is 16.7 to 29.6, the bottom of the scale, and every one of its 1,340 customers is declined.
+
+**Question K3.1.** Why do the model's lowest scoring customers repay better than its middle scoring customers? Either the score is not monotonic at the bottom of its range, or band E is capturing something other than risk.
+
+### K4. The cause: the less the engine knows, the more it lends
+
+| No. | Routing | Population | Approved | Avg limit | Bad rate |
+|---:|---|---:|---:|---:|---:|
+| 1 | SCORED | 14,658 | **8.2%** | 165.2 | 13.9% |
+| 2 | THIN_FILE | 21,169 | **26.4%** | 76.4 | 22.4% |
+| 3 | NO_FILE | 13,640 | **21.9%** | 45.1 | 31.3% |
+
+This is the mechanism behind K2, and it is the most important finding in this register.
+
+1. Customers the engine knows most about are approved at 8.2%. Customers it knows least about are approved at 21.9%, nearly three times as often.
+2. The no file population carries a 31.3% bad rate against 13.9% for the scored population. The engine is lending preferentially to the worst performing group.
+3. Scored customers must clear the layer 4 affordability gate. Thin file and no file customers receive a starter limit through the ladder and appear not to face the same test.
+4. Overdue customers are disproportionately no file: 38.7% of them against 24.5% of settled customers. Because the lenient path is also the path the bad payers fall into, the aggregate ranking inverts.
+
+The inversion persists inside the no file path as well, 18.6% for settled against 28.9% for overdue, so routing is the dominant effect but not the only one.
+
+**Question K4.1.** Does the thin file and no file ladder apply the layer 4 affordability rules? If not, is that intended?
+
+**Question K4.2.** A credit policy in which having no track record makes approval more likely, at a 31.3% observed bad rate, is the opposite of the intended design. What is the proposed fix?
+
+**Question K4.3.** How should a customer who cannot be assessed be treated at launch: declined, offered the starter limit, or held until the feature store covers them?
+
+### K5. J1 confirmed at scale
+
+`minimum_age` declined **8,962 customers, 18.1% of those assessed**, every one on a null observed value. This matches the 19.5% seen in the 300 customer sample. `kyc_status` declined a further 3,450, which is 7.0%. Together, missing data accounts for roughly a quarter of all declines.
+
+### K6. Decline reasons
+
+| No. | Rule | Declines | Share |
+|---:|---|---:|---:|
+| 1 | `minimum_viable_limit` | 10,317 | 26.0% |
+| 2 | `minimum_age` | 8,962 | 22.6% |
+| 3 | `minimum_monthly_income` | 6,811 | 17.2% |
+| 4 | `kyc_status` | 3,450 | 8.7% |
+| 5 | `refer_band_boundaries` | 3,035 | 7.6% |
+| 6 | `prior_default_lookback` | 2,062 | 5.2% |
+| 7 | `currently_delinquent` | 1,844 | 4.6% |
+| 8 | `master_approval_cutoff` | 1,719 | 4.3% |
+| 9 | everything else | 1,485 | 3.8% |

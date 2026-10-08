@@ -118,10 +118,15 @@ head(2, "Create a product profile")
 # it (legacy carries six as of 2026-09-29), so running this against a shared
 # tenant quietly changes which profile assessments bind to.
 DIAG = f'mm-probe-{int(time.time())}'
+# The profile's own fields go nested under `values`, per the guide section 4.1.
+# Sending them at the top level is now correctly rejected with a 400 naming each
+# offending property; before 2026-10 it returned 201 and silently used defaults.
 st, prof = call('POST', '/product-profiles', {
     'tenantId': DIAG, 'productCode': PRODUCT,
-    'productMaximum': 500, 'minimumViableLimit': 30, 'totalCustomerExposureCap': 750,
-    'limitRoundingIncrement': 10, 'permittedTenures': [3, 4, 6], 'depositFloorPct': 0,
+    'values': {
+        'productMaximum': 500, 'minimumViableLimit': 30, 'totalCustomerExposureCap': 750,
+        'limitRoundingIncrement': 10, 'permittedTenures': [3, 4, 6], 'depositFloorPct': 0,
+    },
 }, expect=(200, 201), note='on a throwaway tenant, not ' + TENANT)
 profile_id = prof.get('id') if isinstance(prof, dict) else None
 if isinstance(prof, dict):
