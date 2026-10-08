@@ -45,6 +45,7 @@ function makeProfile(seed, idx) {
       fallback: makeFallback(`p${idx}`, seed.blank),
       coldStart: makeColdStart(`p${idx}`, seed.coldStart),
       layers: structuredClone(seed.layers || LAYER_SEEDS.blank),
+      referralPolicy: structuredClone(REFERRAL_POLICY),
       limits: structuredClone(seed.limits),
       touched: { simulate: false, assess: false, ...(seed.touched || {}) },
     },
@@ -1256,6 +1257,15 @@ function ruleCheck(r) {
 // when the limit is assembled at L5.
 const ACTION_STOPS = { decline: 'decline', refer: 'refer', hold: 'hold', throttle: 'hold' };
 
+// Referrals can be switched off engine-wide. When they are, an effect of
+// "refer" is never what the customer gets: the layer's declared fallback is.
+function resolvedEffect(effect, layerKey) {
+  if (effect !== 'refer') return effect;
+  const pol = cfg().referralPolicy || REFERRAL_POLICY;
+  if (pol.referralsEnabled) return 'refer';
+  return ((pol.fallbacks || {})[layerKey] || {}).action || 'decline';
+}
+
 /* ---------- Single-customer assessment: the walk ---------- */
 
 // Runs the applicant down the waterfall. Returns one entry per layer plus the
@@ -1411,7 +1421,7 @@ function assess() {
   }
   l1.rules = [];
   const l1Stop = [...l1.checks, ...l1.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
-  if (l1Stop) stop('L1', ACTION_STOPS[l1Stop.effect], l1Stop.rc, stopWhy(l1Stop));
+  if (l1Stop) stop('L1', ACTION_STOPS[resolvedEffect(l1Stop.effect, 'layer_1')], l1Stop.rc, stopWhy(l1Stop));
   l1.status = l1Stop ? 'stopped' : 'passed';
 
   /* --- L2: fraud and first-payment-default screens --- */
@@ -1445,7 +1455,7 @@ function assess() {
     }
     l2.rules = [];
     const l2Stop = [...l2.checks, ...l2.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
-    if (l2Stop) stop('L2', ACTION_STOPS[l2Stop.effect], l2Stop.rc, stopWhy(l2Stop));
+    if (l2Stop) stop('L2', ACTION_STOPS[resolvedEffect(l2Stop.effect, 'layer_2')], l2Stop.rc, stopWhy(l2Stop));
     l2.status = l2Stop ? 'stopped' : 'passed';
   } else { l2.status = 'not-reached'; }
 
@@ -1456,10 +1466,10 @@ function assess() {
   let bandIdx = null, band = null, indicative = null, term = null, deposit = null, offerSource = '';
   if (!stopped) {
     if (route === 'thin') {
-      indicative = sNum('layer_3a', 'starter_limit_thin_file');
-      term = sNum('layer_3a', 'ladder_max_tenure');
-      deposit = sNum('layer_3a', 'ladder_deposit_requirement');
-      offerSource = 'Starter limit (thin-file path)';
+      indicative = sNum('layer_5', route === 'insufficient' ? 'starterLimitNoFile' : 'starterLimitThinFile');
+      term = sNum('layer_5', 'ladderMaxTenureMonths');
+      deposit = sNum('layer_5', 'ladderDepositPct');
+      offerSource = route === 'insufficient' ? 'Starter limit (no-file ladder)' : 'Starter limit (thin-file path)';
       l3.checks.push({
         label: 'Thin-file offer', state: indicative == null ? 'unset' : 'ok',
         detail: indicative == null
@@ -1471,7 +1481,7 @@ function assess() {
       l3.rules = ladder;
       const unlocked = ladder.filter(x => x.state === 'fail');
       if (unlocked.length) {
-        l3.note = `${plural(unlocked.length, 'ladder condition')} met, so this customer is eligible for the next step up to the ${MONEY_FMT(sNum('layer_3a', 'max_ladder_limit') || 0)} ceiling.`;
+        l3.note = `${plural(unlocked.length, 'ladder condition')} met, so this customer is eligible for the next step up to the ${MONEY_FMT(sNum('layer_5', 'maxLadderLimit') || 0)} ceiling.`;
       }
       if (indicative == null) stop('L3', 'decline', 'RC-301', 'no starter limit configured');
     } else {
@@ -1492,7 +1502,9 @@ function assess() {
         offerSource = `${band.label} band`;
         l3.checks.push({
           label: 'Score band', state: band.decision === 'Decline' ? 'fail' : refer ? 'fail' : 'ok',
-          detail: `${plural(score ?? 0, 'point')} lands in ${band.label}, floor ${band.floor}. Decision: ${band.decision}.${refer ? ' This band is set to refer.' : ''}`,
+          detail: `${plural(score ?? 0, 'point')} lands in ${band.label}, floor ${band.floor}. Decision: ${band.decision}.`
+            + (band.viaFallback ? ` The band is authored as ${band.authoredDecision.toLowerCase()}, but manual review is switched off, so the L3 fallback applies.` : '')
+            + (refer ? ' This band is in the refer list.' : ''),
           effect: band.decision === 'Decline' ? 'decline' : refer ? 'refer' : null,
           rc: band.decision === 'Decline' ? 'RC-114' : 'RC-602',
           why: 'The band sets the indicative offer: a multiplier of the product maximum, plus a term and a deposit.',
@@ -1522,7 +1534,7 @@ function assess() {
         why: 'A coverage rule at L0 can cap the limit without changing which path the customer takes.' });
     }
     const l3Stop = [...l3.checks, ...l3.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
-    if (l3Stop) stop('L3', ACTION_STOPS[l3Stop.effect], l3Stop.rc, stopWhy(l3Stop));
+    if (l3Stop) stop('L3', ACTION_STOPS[resolvedEffect(l3Stop.effect, 'layer_3')], l3Stop.rc, stopWhy(l3Stop));
     l3.status = l3Stop ? 'stopped' : [...l3.checks, ...l3.rules].some(x => x.state === 'fail' && /^cap/.test(x.effect || '')) ? 'capped' : 'passed';
   } else { l3.status = 'not-reached'; }
 
@@ -1598,7 +1610,7 @@ function assess() {
       return ruleCheck(r);
     });
     const l4Stop = [...l4.checks, ...l4.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
-    if (l4Stop) stop('L4', ACTION_STOPS[l4Stop.effect], l4Stop.rc, stopWhy(l4Stop));
+    if (l4Stop) stop('L4', ACTION_STOPS[resolvedEffect(l4Stop.effect, 'layer_4')], l4Stop.rc, stopWhy(l4Stop));
     l4.status = l4Stop ? 'stopped' : 'passed';
   } else { l4.status = 'not-reached'; }
 
@@ -1610,7 +1622,7 @@ function assess() {
     const exposureCap = sNum('layer_5', 'totalCustomerExposureCap');
     const held = aNum('totalExposure');
     const headroom = exposureCap == null || held == null ? null : Math.max(0, exposureCap - held);
-    const tier = route === 'thin' ? settingValue('layer_3a', 'scorecard_cap') : null;
+    const tier = route === 'thin' ? (settingValue('layer_3a', 'scorecard_cap').value || null) : null;
 
     caps = [
       { label: offerSource || 'Band limit', amount: indicative, from: 'L3',
@@ -1663,20 +1675,40 @@ function assess() {
       label: 'Lowest cap wins', state: finalLimit == null ? 'unset' : 'ok',
       detail: finalLimit == null
         ? 'No cap could be worked out, so there is no limit to offer.'
-        : `${bindingCap.label} is the lowest at ${MONEY_FMT(bindingCap.amount)}. Rounded by “${settingValue('layer_5', 'limitRoundingIncrement') || 'no rule set'}” to ${MONEY_FMT(finalLimit)}.`,
+        : `${bindingCap.label} is the lowest at ${MONEY_FMT(bindingCap.amount)}.`
+          + (sNum('layer_5', 'limitRoundingIncrement')
+              ? ` Rounded down to the nearest ${MONEY_FMT(sNum('layer_5', 'limitRoundingIncrement'))}, giving ${MONEY_FMT(finalLimit)}.`
+              : ' No rounding increment set.'),
       why: 'The final limit is the lowest of every applicable cap. No layer can raise it.',
     });
     if (finalLimit == null) stop('L5', 'decline', 'RC-114', 'no limit could be assembled');
     l5.checks.push(check({ label: 'Minimum viable limit', actual: finalLimit, threshold: minViable,
       dir: 'min', type: 'currency', effect: 'decline', rc: 'RC-207',
       why: 'Below this the loan is not worth making, so it is declined rather than offered.' }));
-    if (term != null && permittedTerms().length && !permittedTerms().includes(term)) {
-      l5.checks.push({ label: 'Loan term', state: 'fail',
-        detail: `${plural(term, 'month')} is not one of the permitted terms (${permittedTerms().map(t => t + ' mo').join(', ')}).`,
-        effect: 'refer', rc: 'RC-602', why: 'L5 owns which repayment periods may be offered at all.' });
+    // The band carries a ceiling, the profile carries the menu. The offer takes
+    // the longest permitted term that does not exceed the band's maximum, so a
+    // product selling one-month credit can still use a band allowing six.
+    const menu = permittedTerms();
+    if (term != null && menu.length) {
+      const fits = menu.filter(t => t <= term);
+      if (fits.length) {
+        const chosen = Math.max(...fits);
+        l5.checks.push({ label: 'Loan term', state: 'ok',
+          detail: `${plural(chosen, 'month')} offered: the longest permitted term at or below the `
+                + `${plural(term, 'month')} ceiling the ${band ? band.label + ' band' : 'starter limit'} allows. `
+                + `Permitted: ${menu.map(t => t + ' mo').join(', ')}.`,
+          why: 'The band sets a maximum; the product profile sets which terms exist at all.' });
+        term = chosen;
+      } else {
+        l5.checks.push({ label: 'Loan term', state: 'fail',
+          detail: `No permitted term fits: the shortest on offer is ${plural(Math.min(...menu), 'month')}, `
+                + `and the ceiling here is ${plural(term, 'month')}.`,
+          effect: 'decline', rc: 'RC-602',
+          why: 'A term the product does not sell cannot be offered, so there is nothing to approve.' });
+      }
     }
     const l5Stop = [...l5.checks, ...l5.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
-    if (l5Stop) stop('L5', ACTION_STOPS[l5Stop.effect], l5Stop.rc, stopWhy(l5Stop));
+    if (l5Stop) stop('L5', ACTION_STOPS[resolvedEffect(l5Stop.effect, 'layer_5')], l5Stop.rc, stopWhy(l5Stop));
     l5.status = l5Stop ? 'stopped' : 'passed';
   } else { l5.status = 'not-reached'; }
 
@@ -1713,7 +1745,7 @@ function assess() {
     }
     l6.rules = [];
     const l6Stop = [...l6.checks, ...l6.rules].find(x => x.state === 'fail' && ACTION_STOPS[x.effect]);
-    if (l6Stop) stop('L6', ACTION_STOPS[l6Stop.effect], l6Stop.rc, stopWhy(l6Stop));
+    if (l6Stop) stop('L6', ACTION_STOPS[resolvedEffect(l6Stop.effect, 'layer_6')], l6Stop.rc, stopWhy(l6Stop));
     l6.status = l6Stop ? 'stopped' : 'passed';
   } else { l6.status = 'not-reached'; }
 
@@ -2413,7 +2445,23 @@ const VALUE_LABEL = {
   multiplier: 'Multiple of the baseline', operator: 'Comparison',
 };
 // Rendered by their own panel rather than as plain fields.
-const TABLE_FIELDS = ['rows', 'cells', 'cols', 'columns', 'rowKey', 'outputs'];
+const TABLE_FIELDS = ['rows', 'cells', 'cols', 'columns', 'rowKey', 'outputs',
+                      'fallbacks', 'referralsEnabled'];
+// The engine now declares a unit and, on the scorecard, the feature a rule
+// reads. Both describe the value rather than being part of it, so they are
+// shown beside the number instead of being offered as an input.
+const META_FIELDS = ['unit', 'feature'];
+// How a declared unit reads next to a number.
+const UNIT_LABEL = {
+  percent: '%', USD: '$', USD_per_day: '$ per day', days: 'days',
+  days_past_due: 'days past due', months: 'months', years: 'years',
+  cycles: 'cycles', loans: 'loans', applications: 'applications',
+  applications_per_day: 'per day', profile_changes: 'changes',
+  multiplier: 'x', score: 'points', max_band: 'band',
+  coefficient_of_variation: 'coefficient of variation',
+  delinquency_percent: '% delinquency',
+};
+const PREFIX_UNITS = { USD: '$' };
 
 const OP_WORD = { gte: 'at least', lte: 'at most', gt: 'more than', lt: 'less than', eq: 'exactly' };
 
@@ -2434,7 +2482,8 @@ function settingScalar(layerKey, key) {
   return null;
 }
 function editableFields(v) {
-  return Object.keys(v || {}).filter(f => !TABLE_FIELDS.includes(f) && f !== 'operator');
+  return Object.keys(v || {}).filter(f =>
+    !TABLE_FIELDS.includes(f) && !META_FIELDS.includes(f) && f !== 'operator');
 }
 // A rule needs attention when a field the engine will read has no value in it.
 function settingNeedsValue(def, val) {
@@ -2460,14 +2509,13 @@ function openParameters() {
 // Derived from the band multiplier and the product maximum, then rounded by the
 // profile's own rounding rule. Limits only ever go down, so this is a ceiling.
 function roundLimit(amount) {
-  const rule = settingValue('layer_5', 'limitRoundingIncrement') || '';
-  const step = /\$1,/.test(rule) ? 1 : /\$5,/.test(rule) ? 5 : /\$10,/.test(rule) ? 10 : 0;
+  const step = sNum('layer_5', 'limitRoundingIncrement');
   if (!step || !isFinite(amount)) return amount;
   return Math.floor(amount / step) * step;
 }
 function bandLimit(b) {
   if (b.multiplier == null) return null;
-  const max = Number(settingValue('layer_5', 'productMaximum'));
+  const max = sNum('layer_5', 'productMaximum');
   if (!isFinite(max) || !max) return null;
   return roundLimit(b.multiplier * max);
 }
@@ -2501,7 +2549,7 @@ function overlapRows(tag) {
   });
 }
 
-function fieldControl(layerKey, key, field, val, label) {
+function fieldControl(layerKey, key, field, val, label, opts) {
   const common = `data-change="rule-field" data-list="${layerKey}" data-key="${esc(key)}" data-field="${esc(field)}"`;
   const name = `${label} for ${key.replace(/_/g, ' ')}`;
   if (typeof val === 'boolean') {
@@ -2516,9 +2564,17 @@ function fieldControl(layerKey, key, field, val, label) {
   if (typeof val === 'string') {
     return `<input class="lim-text" value="${esc(val)}" placeholder="not set" ${common} aria-label="${esc(name)}" />`;
   }
+  // The engine declares the unit, so the number reads as a quantity rather
+  // than a bare figure: 180 days, not 180.
+  const unit = (opts || {}).unit;
+  const pre = unit ? PREFIX_UNITS[unit] : '';
+  const post = unit && !pre ? (UNIT_LABEL[unit] || unit.replace(/_/g, ' ')) : '';
   return `<span class="val-num lim-num">
+    ${pre ? `<span class="val-affix">${esc(pre)}</span>` : ''}
     <input type="number" step="any" class="val-input" value="${val === null || val === undefined ? '' : esc(val)}"
-      placeholder="not set" ${common} aria-label="${esc(name)}" />
+      placeholder="not set" ${common}
+      aria-label="${esc(name)}${unit ? ', in ' + unit.replace(/_/g, ' ') : ''}" />
+    ${post ? `<span class="val-unit">${esc(post)}</span>` : ''}
   </span>`;
 }
 
@@ -2526,6 +2582,9 @@ function fieldControl(layerKey, key, field, val, label) {
 // the rule carries one so the row reads as a sentence rather than a number.
 function tableSummary(layerKey, key) {
   const v = settingValue(layerKey, key);
+  if (key === 'referral_policy') {
+    return v.referralsEnabled ? 'manual review on' : 'off, everything falls back';
+  }
   if (key === 'limit_matrix') {
     return `${(v.rows || []).length} bands x ${(v.columns || []).length} affordability steps`;
   }
@@ -2552,7 +2611,7 @@ function settingEditor(layerKey, d) {
   return `<span class="rule-fields">${op}${fields.map(f => `
     <span class="rule-field">
       <span class="rule-field-label">${esc(VALUE_LABEL[f] || f)}</span>
-      ${fieldControl(layerKey, d.key, f, v[f], VALUE_LABEL[f] || f)}
+      ${fieldControl(layerKey, d.key, f, v[f], VALUE_LABEL[f] || f, { unit: v.unit })}
     </span>`).join('')}</span>`;
 }
 
@@ -2669,11 +2728,48 @@ function pointsTable(layerKey, key, def) {
     <button class="add-rule" data-action="points-add" data-list="${layerKey}" data-key="${esc(key)}">+ Add a points step to ${esc(def.label)}</button>`;
 }
 
+// Referrals can be switched off engine-wide. When they are, every source that
+// would have referred takes the action named here, so nothing queues.
+const FALLBACK_ACTIONS = ['decline', 'approve'];
+function referralPolicyTable(layerKey, key) {
+  const v = settingValue(layerKey, key);
+  const on = v.referralsEnabled === true;
+  const fb = v.fallbacks || {};
+  const rows = Object.keys(fb).map(src => {
+    const layer = LAYERS.find(l => l.key === src);
+    return `
+    <tr>
+      <td class="tbl-band">${esc(layer ? layer.num : src)}</td>
+      <td>${esc(layer ? layer.title : src)}</td>
+      <td><select class="lim-select tbl-select" data-change="referral-fallback" data-list="${layerKey}"
+        data-key="${esc(key)}" data-src="${esc(src)}"
+        aria-label="What ${esc(layer ? layer.num : src)} does instead of referring"
+        ${on ? 'disabled' : ''}>
+        ${FALLBACK_ACTIONS.map(a => `<option${a === fb[src].action ? ' selected' : ''}>${a}</option>`).join('')}
+      </select></td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="fb-row" style="margin-bottom:10px;">
+      <button class="switch switch-lg${on ? ' on' : ''}" data-action="referrals-enabled"
+        data-list="${layerKey}" data-key="${esc(key)}" role="switch" aria-checked="${on ? 'true' : 'false'}"
+        aria-label="Manual review is available"><span class="knob"></span></button>
+      <span style="font-size:13px;color:var(--ink,#101828);font-weight:600;">
+        Manual review is ${on ? 'available' : 'switched off'}</span>
+    </div>
+    <table class="rule-table"><thead><tr><th>Source</th><th>Layer</th><th>Does this instead</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    <div class="rule-table-note">${on
+      ? 'Referrals go to a person, within the daily review capacity set above. The fallback applies once capacity is reached.'
+      : 'With review off, these fallbacks always apply. A band set to refer therefore takes the action shown here, which is what the band table reports.'}</div>`;
+}
+
 // The table a rule carries, if it carries one.
 function ruleTable(layerKey, def) {
   const v = settingValue(layerKey, def.key);
   let body = '';
-  if (def.key === 'limit_matrix') body = limitMatrixTable(layerKey, def.key);
+  if (def.key === 'referral_policy') body = referralPolicyTable(layerKey, def.key);
+  else if (def.key === 'limit_matrix') body = limitMatrixTable(layerKey, def.key);
   else if (def.key === 'refer_band_boundaries') body = referBandPicker(layerKey, def.key);
   else if (v.maxPoints != null) body = pointsTable(layerKey, def.key, def);
   else if (Array.isArray(v.rows) && v.rows.length && (v.rows[0].outputs || {}).band !== undefined) {
@@ -2692,6 +2788,7 @@ function settingRow(layerKey, d) {
   const needs = settingNeedsValue(d, val);
   const tags = [
     d.essential ? '<span class="tag-essential">Credit team</span>' : '',
+    d.feature ? `<span class="tag-feature" title="The feature this rule reads from the serving store">reads ${esc(d.feature)}</span>` : '',
     needs ? '<span class="tag-open">Needs a value</span>' : '',
     d.overlap ? `<button class="tag-overlap" data-action="show-overlap" data-tag="${esc(d.overlap)}"
       data-list="${layerKey}" data-key="${esc(d.key)}">Also read at another layer</button>` : '',
@@ -2708,20 +2805,21 @@ function settingRow(layerKey, d) {
 }
 
 function permittedTerms() {
-  const raw = String(settingValue('layer_5', 'permittedTenures') || '');
-  const nums = (raw.match(/\d+/g) || []).map(Number).filter(n => n > 0);
+  const v = settingValue('layer_5', 'permittedTenures').value;
+  const nums = (Array.isArray(v) ? v : String(v ?? '').match(/\d+/g) || [])
+    .map(Number).filter(n => n > 0);
   return [...new Set(nums)].sort((a, b) => a - b);
 }
 
 // L5's deposit floor is a minimum applied whatever the band says, so the floor
 // wins when it is higher. The band keeps its own value; this is what is offered.
 function effectiveDeposit(b) {
-  const floor = Number(settingValue('layer_5', 'depositFloorPct'));
+  const floor = sNum('layer_5', 'depositFloorPct');
   if (b.deposit == null) return null;
   return isFinite(floor) ? Math.max(b.deposit, floor) : b.deposit;
 }
 function depositFloorBinds(b) {
-  const floor = Number(settingValue('layer_5', 'depositFloorPct'));
+  const floor = sNum('layer_5', 'depositFloorPct');
   return b.deposit != null && isFinite(floor) && floor > b.deposit;
 }
 
@@ -2729,7 +2827,7 @@ function renderBandTable() {
   const bands = cfg().bands;
   const s = state;
   const span = Math.max(1, s.scoreMax - s.scoreMin);
-  const productMax = Number(settingValue('layer_5', 'productMaximum'));
+  const productMax = sNum('layer_5', 'productMaximum');
 
   const segs = bands.map((b, i) => {
     const next = i + 1 < bands.length ? bands[i + 1].floor : s.scoreMax;
@@ -3743,7 +3841,7 @@ function goToTab(key) {
 // matches several elements and focus lands on the wrong one, or on a disabled one.
 const FOCUS_KEYS = ['change', 'action', 'input', 'nav', 'tab', 'step', 'section',
   'rule', 'entry', 'gate', 'key', 'code', 'param', 'list', 'field', 'col', 'row',
-  'val', 'type', 'idx', 'handle', 'layer', 'path', 'tag'];
+  'val', 'type', 'idx', 'handle', 'layer', 'path', 'tag', 'src'];
 
 function focusSignature(el) {
   if (!el || el === document.body || !$view.contains(el)) return null;
@@ -3932,6 +4030,14 @@ document.addEventListener('click', (e) => {
       state.profileTab = 'rules';
       announce('Opened the Credit ladder section in Rules.');
       render(); break;
+    case 'referrals-enabled': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      v.referralsEnabled = !v.referralsEnabled;
+      announce(v.referralsEnabled
+        ? 'Manual review switched on. Bands set to refer now go to a person.'
+        : 'Manual review switched off. Every source that would refer takes its fallback action instead.');
+      markDirty(); render(); break;
+    }
     case 'refer-band': {
       const v = settingEntry(el.dataset.list, el.dataset.key).value;
       v.rows = v.rows && v.rows.length ? v.rows : [{ rangeMin: null, rangeMax: null, outputs: { bands: [] } }];
@@ -4155,6 +4261,11 @@ document.addEventListener('change', (e) => {
       markDirty(); render(); break;
     }
     // A cell of the limit matrix.
+    case 'referral-fallback': {
+      const v = settingEntry(el.dataset.list, el.dataset.key).value;
+      (v.fallbacks[el.dataset.src] || (v.fallbacks[el.dataset.src] = {})).action = el.value;
+      markDirty(); render(); break;
+    }
     case 'rule-cell': {
       const v = settingEntry(el.dataset.list, el.dataset.key).value;
       const raw = String(el.value ?? '').trim();

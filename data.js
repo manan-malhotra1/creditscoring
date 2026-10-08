@@ -121,10 +121,13 @@ const ROUTING_OUTCOMES = [
 ];
 
 // ---------------------------------------------------------------------------
-// The decision waterfall, L0 to L6, generated from the engine's own rule frame
-// (GET /rule-versions/frame) so the keys, layers and value shapes here are the
+// The decision waterfall, generated from the engine's own rule frame and
+// product profile, so keys, layers, units, value shapes and defaults are the
 // ones the engine actually evaluates. Copy follows Technical Solutioning v2.1.
-// Regenerate with api-tests/sync-frame.py after a rule-set change.
+//
+// Rule set   fea92de9-8bc9-405c-9c83-e5195b254afe rev 4
+// Profile    1443698d-a76e-4098-a858-d0788383776b rev 1
+// Regenerate with: python3 api-tests/genlayers.py
 // ---------------------------------------------------------------------------
 
 const LAYERS = [
@@ -133,19 +136,19 @@ const LAYERS = [
     question: 'Is there enough data to score this customer at all?',
     intro: 'This layer routes, it never declines. Every parameter carries two thresholds. A customer is SCORED only if all of them are at or above sufficiency, NO FILE if any single one is below its hard floor, and THIN FILE in between. All-must-pass on sufficiency and any-one-fails on the floor, deliberately unweighted, because a weighted rule cannot be explained to a declined customer or defended to a regulator.',
     settings: [
-      { key: 'feature_completeness', label: 'Feature completeness', type: 'dual', essential: true,
+      { key: 'feature_completeness', label: 'Feature completeness', type: 'dual', essential: true, unit: 'percent',
         meaning: 'Share of the features the model needs that are actually present for this customer. If the model uses 40 features and 28 are there, completeness is 70 percent.' },
-      { key: 'wallet_tenure', label: 'Wallet tenure', type: 'dual', essential: true, overlap: 'tenure',
+      { key: 'wallet_tenure', label: 'Wallet tenure', type: 'dual', essential: true, unit: 'days',
         meaning: 'Days since the Ecocash account was opened. Behaviour observed over a short period is not reliable evidence, so this is the floor for trusting a score at all.' },
-      { key: 'transaction_history', label: 'Transaction history', type: 'dual', essential: true,
+      { key: 'transaction_history', label: 'Transaction history', type: 'dual', essential: true, unit: 'days',
         meaning: 'Distinct days in the last 90 on which the customer transacted. Measures genuine activity rather than a dormant account with one transaction.' },
-      { key: 'dormancy', label: 'Dormancy', type: 'dual', essential: false, overlap: 'dormancy',
+      { key: 'dormancy', label: 'Dormancy', type: 'dual', essential: false, unit: 'days',
         meaning: 'Days since the last transaction of any kind. A long gap means the observed behaviour is stale, not that the customer is ineligible.' },
-      { key: 'model_confidence', label: 'Model confidence', type: 'dual', essential: true,
+      { key: 'model_confidence', label: 'Model confidence', type: 'dual', essential: true, unit: 'percent',
         meaning: 'Confidence returned alongside the score. Below the floor the score is not trusted. This one routes to thin file and never to no file, because low confidence is the model’s problem, not the customer’s.' },
-      { key: 'score_staleness_limit', label: 'Score staleness limit', type: 'threshold', essential: false,
+      { key: 'score_staleness_limit', label: 'Score staleness limit', type: 'cycles', essential: false, unit: 'cycles',
         meaning: 'How many cycles old a score may be before it is out of date. Scores recalculate every cycle, so this mainly catches a pipeline failure going unnoticed.' },
-      { key: 'repeat_path_threshold', label: 'Repeat path threshold', type: 'count', essential: false,
+      { key: 'repeat_path_threshold', label: 'Repeat path threshold', type: 'loans', essential: false, unit: 'loans',
         meaning: 'How many closed loans before a customer is treated as a repeat borrower rather than a new one.' },
     ],
   },
@@ -154,111 +157,95 @@ const LAYERS = [
     question: 'Is the customer eligible at all?',
     intro: 'Absolute eligibility, and eligibility only. The evidence thresholds sit at L0, which is what lets a genuinely new customer pass here and reach a starter offer. These are not risk judgements and the score does not affect them.',
     settings: [
-      { key: 'currently_delinquent', label: 'Currently delinquent', type: 'days', essential: true, overlap: 'delinquency', action: 'decline',
-        meaning: 'Days past due on any open loan above which a new loan is refused.' },
-      { key: 'prior_default_lookback', label: 'Prior default with Ecocash', type: 'months', essential: true, action: 'decline',
-        meaning: 'Excludes a customer who has defaulted with Ecocash inside this window. Commercial rather than technical: a lookback trades safety against a smaller customer base. Set it knowing the daily data lag.' },
-      { key: 'minimum_age', label: 'Minimum age', type: 'threshold', essential: true, action: 'decline',
+      { key: 'minimum_age', label: 'Minimum age', type: 'years', essential: true, unit: 'years', action: 'decline',
         meaning: 'Youngest customer who may be offered credit.' },
-      { key: 'maximum_age_at_maturity', label: 'Maximum age at maturity', type: 'threshold', essential: true, action: 'decline',
+      { key: 'maximum_age_at_maturity', label: 'Maximum age at maturity', type: 'years', essential: true, unit: 'years', action: 'decline',
         meaning: 'Oldest a customer may be when the final instalment falls due, not when they apply.' },
-      { key: 'kyc_status', label: 'KYC status', type: 'multi', essential: true, overlap: 'kyc', action: 'decline',
+      { key: 'kyc_status', label: 'KYC status', type: 'multi', essential: true, action: 'decline',
         meaning: 'Which verification tiers are eligible. Carried through the serving store as a raw eligibility field, because it is excluded from the model feature set.' },
       { key: 'account_status', label: 'Account status', type: 'multi', essential: true, action: 'decline',
         meaning: 'Which wallet states are eligible.' },
       { key: 'deceased_indicator', label: 'Deceased indicator', type: 'flag', essential: false, action: 'decline',
         meaning: 'Excludes an account flagged as belonging to a deceased customer.' },
-      { key: 'concurrent_loan_cap', label: 'Concurrent loan cap', type: 'threshold', essential: true, action: 'decline',
-        meaning: 'How many loans a customer may hold at once. A cap of one is conservative for device financing; taking several at once is the fastest route to over-indebtedness.' },
+      { key: 'concurrent_loan_cap', label: 'Concurrent loan cap', type: 'loans', essential: true, unit: 'loans', action: 'decline',
+        meaning: 'How many loans a customer may hold at once. Taking several at once is the fastest route to over-indebtedness.' },
       { key: 'blacklist_debarment', label: 'Blacklist or debarment', type: 'flag', essential: true, action: 'decline',
         meaning: 'Excludes a customer on a blacklist or under debarment.' },
       { key: 'fraud_aml_flag', label: 'Fraud or AML flag', type: 'flag', essential: true, action: 'decline',
         meaning: 'Excludes a customer carrying a fraud or anti-money-laundering flag. Non-negotiable, and cannot be waived by taking a deposit.' },
       { key: 'staff_related_parties', label: 'Staff and related parties', type: 'flag', essential: false, action: 'refer',
-        meaning: 'Employees and connected parties. Routed to review rather than declined, for governance reasons rather than risk ones.' },
+        meaning: 'Employees and connected parties, handled for governance reasons rather than risk ones.' },
+      { key: 'currently_delinquent', label: 'Currently delinquent', type: 'days_past_due', essential: true, unit: 'days_past_due', action: 'decline',
+        meaning: 'Days past due on any open loan above which a new loan is refused.' },
+      { key: 'prior_default_lookback', label: 'Prior default with Ecocash', type: 'months', essential: true, unit: 'months', action: 'decline',
+        meaning: 'Excludes a customer who has defaulted with Ecocash inside this window. Commercial rather than technical: a lookback trades safety against a smaller customer base. Set it knowing the daily data lag.' },
     ],
   },
   {
     key: 'layer_2', num: 'L2', ref: '§6.4', title: 'Fraud and first-payment-default screens',
     question: 'Does the application carry identity risk?',
-    intro: 'Identity risk rather than credit risk, where the warning signs and the remedies both differ. Most of these refer rather than decline, because fraud rules always catch some genuine customers. SIM registration age and swap history are not available from the data and are deliberately not part of this design.',
+    intro: 'Identity risk rather than credit risk, where the warning signs and the remedies both differ. SIM registration age and swap history are not available from the data and are deliberately not part of this design.',
     settings: [
-      { key: 'minimum_account_age', label: 'Minimum account age', type: 'days', essential: false, overlap: 'tenure', action: 'refer',
-        meaning: 'Wallet age below which the application is referred. Distinct from the L0 threshold, which asks whether a score can be trusted.' },
-      { key: 'application_velocity', label: 'Application velocity', type: 'window', essential: false, action: 'refer',
+      { key: 'minimum_account_age', label: 'Minimum account age', type: 'days', essential: false, unit: 'days', action: 'refer',
+        meaning: 'Wallet age below which the application is stopped. Distinct from the L0 threshold, which asks whether a score can be trusted.' },
+      { key: 'application_velocity', label: 'Application velocity', type: 'applications', essential: false, unit: 'applications', action: 'refer',
         meaning: 'Repeated applications in a short window suggest shopping for an approval. Computed live rather than from the daily extract.' },
-      { key: 'dormant_then_suddenly_active', label: 'Dormant then suddenly active', type: 'composite', essential: false, overlap: 'dormancy', action: 'refer',
-        meaning: 'An account that was quiet and then became busy shortly before applying.' },
-      { key: 'profile_change_velocity', label: 'Profile change velocity', type: 'window', essential: false, action: 'refer',
+      { key: 'profile_change_velocity', label: 'Profile change velocity', type: 'profile_changes', essential: false, unit: 'profile_changes', action: 'refer',
         meaning: 'KYC or contact details changing just before an application is an account-takeover signal.' },
-      { key: 'pre_application_inflow_spike', label: 'Pre-application inflow spike', type: 'threshold', essential: false, action: 'refer',
+      { key: 'pre_application_inflow_spike', label: 'Pre-application inflow spike', type: 'multiplier', essential: false, unit: 'multiplier', action: 'refer',
         meaning: 'Compares recent inflow against the longer baseline. A sudden spike can mean the wallet was funded to look more creditworthy.' },
       { key: 'device_change_frequency', label: 'Device change frequency', type: 'count', essential: false, action: 'refer',
         meaning: 'How often the device on the account has changed. Frequent changes can indicate device resale, which matters directly when the loan finances a device.' },
+      { key: 'dormant_then_suddenly_active', label: 'Dormant then suddenly active', type: 'count', essential: false, action: 'refer',
+        meaning: 'An account that was quiet and then became busy shortly before applying.' },
     ],
   },
   {
     key: 'layer_3', num: 'L3', ref: '§6.5', title: 'Score decisioning and bands',
     question: 'What band does the customer fall into, and what is the indicative offer?',
-    intro: 'Converts risk into an indicative offer for a scored customer. Score ranges are left open until the first training run, then placed against the observed distribution using a band calibration report of population share and bad rate by vigintile.',
+    intro: 'Converts risk into an indicative offer. The band table sets the shape of the offer; the limit matrix refines it downward on the score band and the affordability share together.',
     settings: [
-      { key: 'band_table', label: 'Score bands', type: 'bands', essential: true,
-        meaning: 'The band each score falls into, and the indicative offer that comes with it. Ranges stay open until the first training run places them against the observed distribution.' },
-      { key: 'predicted_confidence_band_table', label: 'Predicted confidence bands', type: 'bands', essential: false,
+      { key: 'predicted_confidence_band_table', label: 'Predicted confidence bands', type: 'table', essential: false,
         meaning: 'Bands the model’s repayment confidence falls into, reported alongside the credit band. Informational: it does not set the offer.' },
-      { key: 'limit_matrix', label: 'Limit matrix', type: 'matrix', essential: true,
+      { key: 'limit_matrix', label: 'Limit matrix', type: 'table', essential: true,
         meaning: 'The indicative multiplier on two axes: the score band, and the share of income the instalment would take. The affordability share comes from the maximum sustainable instalment computed at L4, not from the offer, which would be circular. The matrix only ever refines the offer downward, and the L4 cap still applies afterwards.' },
-      { key: 'master_approval_cutoff', label: 'Master approval cutoff', type: 'count', essential: true,
+      { key: 'master_approval_cutoff', label: 'Master approval cutoff', type: 'score', essential: true, unit: 'score',
         meaning: 'A single score floor below which nobody is approved, whatever the band table says. The main lever for tightening or loosening overall.' },
-      { key: 'refer_band_boundaries', label: 'Refer band boundaries', type: 'bands', essential: true,
-        meaning: 'Which bands route to manual review rather than being decided automatically.' },
-      { key: 'score_source_cap', label: 'Score source cap', type: 'band', essential: true,
+      { key: 'refer_band_boundaries', label: 'Refer band boundaries', type: 'table', essential: false,
+        meaning: 'Which bands would route to manual review. Dormant while referrals are switched off: those bands fall back to the action set in the referral policy.' },
+      { key: 'score_source_cap', label: 'Score source cap', type: 'max_band', essential: true, unit: 'max_band',
         meaning: 'The highest band a scorecard score may reach. Model discrimination can only be measured on the model-scored population, so a scorecard score is held below the top bands.' },
-      { key: 'manual_review_capacity', label: 'Manual review capacity', type: 'count', essential: true,
-        meaning: 'The most referred applications the team can handle per day. Once capacity is reached each referral falls back to a defined action for its source rather than queueing.' },
+      { key: 'manual_review_capacity', label: 'Manual review capacity', type: 'applications_per_day', essential: false, unit: 'applications_per_day',
+        meaning: 'The most referred applications the team can handle per day. Meaningless while referrals are switched off.' },
+      { key: 'referral_policy', label: 'Referral policy', type: 'table', essential: true,
+        meaning: 'Whether manual review exists at all, and what each referral source does instead when it does not. With referrals off, every band or screen that would have referred takes its fallback action, so no application can sit in a queue that nobody is working.' },
+      { key: 'band_table', label: 'Score bands', type: 'table', essential: true,
+        meaning: 'The band each score falls into, and the indicative offer that comes with it.' },
     ],
   },
   {
-    key: 'layer_3a', num: 'L3a', ref: '§6.6', title: 'Fallback scorecard and the credit ladder',
-    question: 'How is a customer the model cannot score handled?',
-    intro: 'Thin-file and no-file customers cannot be scored by the model, so a points scorecard scores them on observed signals onto the same 0 to 100 scale and they enter the same band table. It is deterministic arithmetic over features Layer B already holds, not a trained model, so the boundary between scoring and decisioning still holds. It is a bridge, not a permanent parallel system.',
+    key: 'layer_3a', num: 'L3a', ref: '§6.6', title: 'Fallback scorecard',
+    question: 'How is a customer the model cannot score given a score?',
+    intro: 'Thin-file and no-file customers cannot be scored by the model, so a points scorecard scores them on observed signals onto the same 0 to 100 scale and they enter the same band table. Deterministic arithmetic over features Layer B already holds, not a trained model. Each attribute names the feature it reads and the bands that award its points.',
     settings: [
-      { key: 'scorecard_cap', label: 'Scorecard band cap', type: 'band', essential: true,
+      { key: 'scorecard_cap', label: 'Scorecard band cap', type: 'max_band', essential: true, unit: 'max_band',
         meaning: 'The top band a scorecard-scored customer can reach.' },
-      { key: 'average_wallet_balance_points', label: 'Average balance points', type: 'points', essential: false,
+      { key: 'average_wallet_balance_points', label: 'Average balance points', type: 'points', essential: false, feature: 'balanceAvg30d',
         meaning: 'Points for the average wallet balance. The largest single contributor, because a maintained balance is the strongest thin-file signal.' },
-      { key: 'wallet_tenure_points', label: 'Wallet tenure points', type: 'points', essential: false, overlap: 'tenure',
-        meaning: 'Points awarded for how long the wallet has been open.' },
-      { key: 'active_days_last_30_points', label: 'Active days points', type: 'points', essential: false,
+      { key: 'wallet_tenure_points', label: 'Wallet tenure points', type: 'points', essential: false, feature: 'accountTenureDays',
+        meaning: 'Points for how long the wallet has been open.' },
+      { key: 'active_days_last_30_points', label: 'Active days points', type: 'points', essential: false, feature: 'activeDays30d',
         meaning: 'Points for distinct days with activity in the last 30.' },
-      { key: 'positive_cashflow_day_ratio_points', label: 'Positive cash-flow day ratio points', type: 'points', essential: false,
+      { key: 'positive_cashflow_day_ratio_points', label: 'Positive cash-flow day ratio points', type: 'points', essential: false, feature: 'positiveCashflowRatio90d',
         meaning: 'Points for the share of days where money in exceeded money out.' },
-      { key: 'transaction_count_last_30_points', label: 'Transaction count points', type: 'points', essential: false,
+      { key: 'transaction_count_last_30_points', label: 'Transaction count points', type: 'points', essential: false, feature: 'transactionCount30d',
         meaning: 'Points for the number of transactions in the last 30 days.' },
-      { key: 'minimum_wallet_balance_points', label: 'Minimum balance points', type: 'points', essential: false,
+      { key: 'minimum_wallet_balance_points', label: 'Minimum balance points', type: 'points', essential: false, feature: 'balanceMin30d',
         meaning: 'Points for the lowest balance held, which shows whether the wallet is ever emptied.' },
       { key: 'inflow_regularity_points', label: 'Inflow regularity points', type: 'points', essential: false,
         meaning: 'Points for how regularly money arrives, rather than how much.' },
-      { key: 'kyc_completeness_points', label: 'KYC completeness points', type: 'points', essential: false, overlap: 'kyc',
+      { key: 'kyc_completeness_points', label: 'KYC completeness points', type: 'points', essential: false, feature: 'kycLevel',
         meaning: 'Points for how complete the customer’s verification record is.' },
-      { key: 'starter_limit_thin_file', label: 'Starter limit, thin file', type: 'currency', essential: true,
-        meaning: 'The most offered to a thin-file customer on a first loan.' },
-      { key: 'starter_limit_no_file', label: 'Starter limit, no file', type: 'currency', essential: true,
-        meaning: 'The most offered to a no-file customer. Set to zero to decline this group: the decline is then produced by policy arithmetic at L5 rather than a structural gate, and the reason code names it.' },
-      { key: 'ladder_max_tenure', label: 'Ladder maximum tenure', type: 'count', essential: false,
-        meaning: 'The longest repayment period on a ladder loan. A shorter term means the outcome is known sooner.' },
-      { key: 'ladder_deposit_requirement', label: 'Ladder deposit requirement', type: 'percent', essential: true,
-        meaning: 'Share of value paid upfront on a ladder loan. A deposit reduces exposure and selects for committed customers.' },
-      { key: 'loans_required_to_graduate', label: 'Loans required to graduate', type: 'count', essential: false,
-        meaning: 'How many loans must be repaid in full before the limit increases.' },
-      { key: 'limit_increase_per_cycle', label: 'Limit increase per cycle', type: 'percent', essential: false,
-        meaning: 'How much the limit rises after each successfully repaid loan, as a share of the previous limit.' },
-      { key: 'max_ladder_limit', label: 'Maximum limit via the ladder', type: 'currency', essential: false,
-        meaning: 'The ceiling reachable through the ladder alone, before normal band scoring applies.' },
-      { key: 'reset_on_delinquency', label: 'Reset on delinquency', type: 'days', essential: false, overlap: 'delinquency',
-        meaning: 'The level of lateness that resets a customer to the starter limit.' },
-      { key: 'cooling_period_after_decline', label: 'Cooling period after decline', type: 'days', essential: false,
-        meaning: 'How long a declined customer waits before applying again.' },
     ],
   },
   {
@@ -266,39 +253,39 @@ const LAYERS = [
     question: 'Is this specific instalment sustainable against income?',
     intro: 'A different question from the score. It applies to every path, including thin file and no file, with no bypass. Income is derived, never taken from gross inflow: balance is a stock and income is a flow, and neither is sufficient alone.',
     settings: [
-      { key: 'balance_proxy_intercept', label: 'Balance proxy intercept', type: 'currency', essential: false,
-        meaning: 'The constant term of the same fitted relationship.' },
-      { key: 'minimum_monthly_income', label: 'Minimum monthly income', type: 'currency', essential: true,
-        meaning: 'The floor below which no loan is offered, whatever the ratios say.' },
-      { key: 'instalment_to_income_cap', label: 'Instalment to income cap', type: 'percent', essential: true,
+      { key: 'instalment_to_income_cap', label: 'Instalment to income cap', type: 'percent', essential: true, unit: 'percent',
         meaning: 'The largest share of monthly income the instalment may represent. With income of $400 and a cap of 25 percent, the maximum instalment is $100.' },
-      { key: 'net_disposable_income_floor', label: 'Net disposable income floor', type: 'currency', essential: true,
-        meaning: 'The minimum that must remain after estimated expenses and the new instalment. Protects customers who pass the ratio test but have very little margin.' },
       { key: 'existing_obligation_deduction', label: 'Existing obligation deduction', type: 'flag', essential: false,
         meaning: 'Whether instalments on the customer’s existing Ecocash loans are subtracted from income first. Loans held with other lenders are invisible until bureau or Credit Registry data is available.' },
-      { key: 'income_stability_requirement', label: 'Income stability requirement', type: 'threshold', essential: false,
-        meaning: 'How variable income may be, as a coefficient of variation. Steady income supports an instalment more reliably than the same average arriving erratically.' },
-      { key: 'income_confidence_threshold', label: 'Income confidence threshold', type: 'percent', essential: false,
+      { key: 'income_confidence_threshold', label: 'Income confidence threshold', type: 'percent', essential: false, unit: 'percent',
         meaning: 'Above this, derived recurring income is used. Below it, the balance proxy is used instead and a haircut applies.' },
-      { key: 'haircut_low_confidence', label: 'Haircut when confidence is low', type: 'percent', essential: false,
+      { key: 'haircut_low_confidence', label: 'Haircut when confidence is low', type: 'percent', essential: false, unit: 'percent',
         meaning: 'How much estimated income is reduced when confidence falls below the threshold, so a weak estimate produces a cautious offer rather than a confident wrong one.' },
-      { key: 'haircut_thin_no_file', label: 'Haircut, thin file and no file', type: 'percent', essential: true,
-        meaning: 'A deeper reduction for customers with little history, set conservatively because obligations to other lenders cannot be seen.' },
-      { key: 'balance_proxy_coefficient', label: 'Balance proxy coefficient', type: 'count', essential: false,
+      { key: 'balance_proxy_intercept', label: 'Balance proxy intercept', type: 'USD', essential: false, unit: 'USD',
+        meaning: 'The constant term of the same fitted relationship.' },
+      { key: 'balance_proxy_coefficient', label: 'Balance proxy coefficient', type: 'multiplier', essential: false, unit: 'multiplier',
         meaning: 'Fitted, not chosen: derived by regressing derived income against average and median balance on the population where both are computable with high confidence, then applied where derivation fails.' },
+      { key: 'income_stability_requirement', label: 'Income stability requirement', type: 'coefficient_of_variation', essential: false, unit: 'coefficient_of_variation',
+        meaning: 'How variable income may be, as a coefficient of variation. Steady income supports an instalment more reliably than the same average arriving erratically.' },
+      { key: 'net_disposable_income_floor', label: 'Net disposable income floor', type: 'USD', essential: true, unit: 'USD',
+        meaning: 'The minimum that must remain after estimated expenses and the new instalment. Protects customers who pass the ratio test but have very little margin.' },
+      { key: 'haircut_thin_no_file', label: 'Haircut, thin file and no file', type: 'percent', essential: true, unit: 'percent',
+        meaning: 'A deeper reduction for customers with little history, set conservatively because obligations to other lenders cannot be seen.' },
+      { key: 'minimum_monthly_income', label: 'Minimum monthly income', type: 'USD', essential: true, unit: 'USD',
+        meaning: 'The floor below which no loan is offered, whatever the ratios say.' },
     ],
   },
   {
-    key: 'layer_5', num: 'L5', ref: '§6.8', title: 'Exposure and limit assignment',
+    key: 'layer_5', num: 'L5', ref: '§6.8', title: 'Exposure, limits and the credit ladder',
     question: 'What is the final limit, taken as the lowest of every applicable cap?',
-    intro: 'Produces the final number as the lowest cap that applies. Limits are the most effective loss control available, because loss is exposure multiplied by default rate and a cutoff moves only the second term. These values live in the product profile rather than the rule set, and are the only product-specific layer.',
+    intro: 'Produces the final number as the lowest cap that applies. Limits are the most effective loss control available, because loss is exposure multiplied by default rate and a cutoff moves only the second term. Every value here lives on the product profile rather than the rule set, which is why this is the only product-specific layer, and why the credit ladder moved here: a starter limit is a property of the product.',
     // Held on the product profile rather than the rule set: the only
     // product-specific layer, and the only one with no rules of its own.
     profile: true,
     settings: [
       { key: 'productMaximum', label: 'Product maximum', type: 'currency', essential: true,
         meaning: 'The highest limit this product can ever offer. Band multipliers are applied to this figure.' },
-      { key: 'minimumViableLimit', label: 'Minimum viable limit', type: 'currency', essential: false,
+      { key: 'minimumViableLimit', label: 'Minimum viable limit', type: 'currency', essential: true,
         meaning: 'If every cap combined comes out below this, no offer is made. This is also how a no-file customer with a zero starter limit is declined, by arithmetic rather than a gate.' },
       { key: 'totalCustomerExposureCap', label: 'Total customer exposure cap', type: 'currency', essential: true,
         meaning: 'The most a customer may owe across all Ecocash credit at once: existing outstanding balance plus the new limit.' },
@@ -308,6 +295,24 @@ const LAYERS = [
         meaning: 'The repayment periods, in months, that may be offered at all. A band can only pick from this list.' },
       { key: 'depositFloorPct', label: 'Deposit floor', type: 'percent', essential: false,
         meaning: 'A minimum deposit applied whatever the band says.' },
+      { key: 'starterLimitThinFile', label: 'Starter limit, thin file', type: 'currency', essential: true,
+        meaning: 'The most offered to a thin-file customer on a first loan.' },
+      { key: 'starterLimitNoFile', label: 'Starter limit, no file', type: 'currency', essential: true,
+        meaning: 'The most offered to a customer with no history at all. Set this to zero to decline that group instead: the decline then comes from the minimum viable limit, and the reason code names it.' },
+      { key: 'ladderMaxTenureMonths', label: 'Ladder maximum tenure', type: 'months', essential: false,
+        meaning: 'The longest repayment period on a ladder loan. A shorter term means the outcome is known sooner.' },
+      { key: 'ladderDepositPct', label: 'Ladder deposit requirement', type: 'percent', essential: true,
+        meaning: 'Share of value paid upfront on a ladder loan. A deposit reduces exposure and selects for committed customers.' },
+      { key: 'loansRequiredToGraduate', label: 'Loans required to graduate', type: 'count', essential: false,
+        meaning: 'How many loans must be repaid in full before the limit increases.' },
+      { key: 'limitIncreasePerCyclePct', label: 'Limit increase per cycle', type: 'percent', essential: false,
+        meaning: 'How much the limit rises after each successfully repaid loan, as a share of the previous limit.' },
+      { key: 'maxLadderLimit', label: 'Maximum limit via the ladder', type: 'currency', essential: false,
+        meaning: 'The ceiling reachable through the ladder alone, after which normal band scoring applies.' },
+      { key: 'resetOnDelinquencyDaysPastDue', label: 'Reset on delinquency', type: 'days', essential: false,
+        meaning: 'The level of lateness that resets a laddered customer to the starter limit.' },
+      { key: 'coolingPeriodAfterDeclineDays', label: 'Cooling period after decline', type: 'days', essential: false,
+        meaning: 'How long a declined customer waits before applying again.' },
     ],
   },
   {
@@ -315,120 +320,153 @@ const LAYERS = [
     question: 'Does this approval remain acceptable for the book as a whole?',
     intro: 'Every rule so far judges an individual customer; these protect the book. Their absence is usually what causes difficulty months later, when the book has quietly concentrated in the riskiest segment.',
     settings: [
-      { key: 'max_thin_file_share_of_approvals', label: 'Maximum thin-file share of approvals', type: 'percent', essential: true,
+      { key: 'max_thin_file_share_of_approvals', label: 'Maximum thin-file share of approvals', type: 'percent', essential: true, unit: 'percent',
         meaning: 'The share of daily approvals that may go to thin-file customers. Stops the book filling with the least-known customers during a growth push.' },
-      { key: 'daily_disbursement_cap', label: 'Daily disbursement cap', type: 'currency', essential: true,
+      { key: 'daily_disbursement_cap', label: 'Daily disbursement cap', type: 'USD_per_day', essential: true, unit: 'USD_per_day',
         meaning: 'A ceiling on the total amount disbursed per day. Controls the pace at which exposure builds.' },
-      { key: 'new_to_credit_concentration_cap', label: 'New-to-credit concentration cap', type: 'percent', essential: true,
+      { key: 'new_to_credit_concentration_cap', label: 'New-to-credit concentration cap', type: 'percent', essential: true, unit: 'percent',
         meaning: 'The largest share of the book made up of customers with no prior repayment history.' },
-      { key: 'automatic_tightening_trigger', label: 'Automatic tightening trigger', type: 'threshold', essential: false, action: 'tighten_by_one_band',
+      { key: 'automatic_tightening_trigger', label: 'Automatic tightening trigger', type: 'delinquency_percent', essential: false, unit: 'delinquency_percent', action: 'tighten_by_one_band',
         meaning: 'If early delinquency rises above an agreed level the engine tightens automatically, rather than waiting for a monthly review.' },
       { key: 'kill_switch', label: 'Kill switch', type: 'flag', essential: true,
         meaning: 'A manual control that halts all approvals immediately. Necessary for any live lending system.' },
-      { key: 'random_approval_holdout', label: 'Random approval holdout', type: 'percent', essential: false,
+      { key: 'random_approval_holdout', label: 'Random approval holdout', type: 'percent', essential: false, unit: 'percent',
         meaning: 'Approves a small share of applications just below the cutoff at random, so outcomes are observed for customers who would normally be declined. Without it every new model trains only on customers the previous rules passed, and becomes systematically over-optimistic.' },
     ],
   },
 ];
 
 // Default values exactly as the engine's ACTIVE rule set holds them, so an
-// unedited profile in this console and an unedited product in the engine agree.
+// unedited profile here and an unedited product there agree.
 const LAYER_DEFAULTS = {
   layer_0: {
-    feature_completeness: { value: {"hardFloor": 40, "sufficiency": 70}, enabled: true },
-    wallet_tenure: { value: {"hardFloor": 30, "sufficiency": 180}, enabled: true },
-    transaction_history: { value: {"hardFloor": 3, "sufficiency": 15}, enabled: true },
-    dormancy: { value: {"hardFloor": 90, "sufficiency": 30}, enabled: true },
-    model_confidence: { value: {"hardFloor": null, "sufficiency": null, "floorBehavior": "route_thin_file"}, enabled: false },
-    score_staleness_limit: { value: {"operator": "lte", "threshold": 2}, enabled: false },
-    repeat_path_threshold: { value: {"value": 1}, enabled: false },
+    feature_completeness: { value: {"unit": "percent", "operator": "gte", "hardFloor": 40, "sufficiency": 70}, enabled: true },
+    wallet_tenure: { value: {"unit": "days", "operator": "gte", "hardFloor": 30, "sufficiency": 180}, enabled: true },
+    transaction_history: { value: {"unit": "days", "operator": "gte", "hardFloor": 3, "sufficiency": 15}, enabled: true },
+    dormancy: { value: {"unit": "days", "operator": "lte", "hardFloor": 90, "sufficiency": 30}, enabled: true },
+    model_confidence: { value: {"unit": "percent", "operator": "gte", "hardFloor": null, "sufficiency": null, "floorBehavior": "route_thin_file"}, enabled: false },
+    score_staleness_limit: { value: {"unit": "cycles", "operator": "lte", "threshold": 2}, enabled: false },
+    repeat_path_threshold: { value: {"unit": "loans", "operator": "gte", "threshold": 1}, enabled: false },
   },
   layer_1: {
-    currently_delinquent: { value: {"operator": "lte", "threshold": 2}, enabled: true, action: 'decline' },
-    prior_default_lookback: { value: {"months": 6}, enabled: true, action: 'decline' },
-    minimum_age: { value: {"operator": "gte", "threshold": 18}, enabled: true, action: 'decline' },
-    maximum_age_at_maturity: { value: {"operator": "lte", "threshold": 65}, enabled: true, action: 'decline' },
-    kyc_status: { value: {"allowedValues": ["fully_verified"]}, enabled: false, action: 'decline' },
+    minimum_age: { value: {"unit": "years", "operator": "gte", "threshold": 18}, enabled: true, action: 'decline' },
+    maximum_age_at_maturity: { value: {"unit": "years", "operator": "lte", "threshold": 65}, enabled: true, action: 'decline' },
+    kyc_status: { value: {"allowedValues": ["fully_verified"]}, enabled: true, action: 'decline' },
     account_status: { value: {"allowedValues": ["active"]}, enabled: false, action: 'decline' },
     deceased_indicator: { value: {"expectedValue": false}, enabled: false, action: 'decline' },
-    concurrent_loan_cap: { value: {"operator": "lte", "threshold": 1}, enabled: true, action: 'decline' },
+    concurrent_loan_cap: { value: {"unit": "loans", "operator": "lte", "threshold": 10}, enabled: true, action: 'decline' },
     blacklist_debarment: { value: {"expectedValue": false}, enabled: false, action: 'decline' },
     fraud_aml_flag: { value: {"expectedValue": false}, enabled: false, action: 'decline' },
     staff_related_parties: { value: {"expectedValue": false}, enabled: false, action: 'refer' },
+    currently_delinquent: { value: {"unit": "days_past_due", "operator": "lte", "threshold": 45}, enabled: true, action: 'decline' },
+    prior_default_lookback: { value: {"unit": "months", "operator": "gte", "threshold": 0.5}, enabled: true, action: 'decline' },
   },
   layer_2: {
-    minimum_account_age: { value: {"operator": "gte", "threshold": 90}, enabled: true, action: 'refer' },
-    application_velocity: { value: {"operator": "gt", "threshold": 2, "windowDays": 30}, enabled: true, action: 'refer' },
-    dormant_then_suddenly_active: { value: {"dormancyThresholdDays": 30, "reactivationWindowDays": 7, "reactivationMinActiveDays": 5}, enabled: true, action: 'refer' },
-    profile_change_velocity: { value: {"operator": "gte", "threshold": 1, "windowDays": 14}, enabled: true, action: 'refer' },
-    pre_application_inflow_spike: { value: {"operator": "gt", "currentWindowDays": 30, "baselineWindowDays": 90, "multiplierThreshold": 3}, enabled: true, action: 'refer' },
+    minimum_account_age: { value: {"unit": "days", "operator": "gte", "threshold": 90}, enabled: true, action: 'refer' },
+    application_velocity: { value: {"unit": "applications", "operator": "gt", "threshold": 5, "windowDays": 30}, enabled: true, action: 'refer' },
+    profile_change_velocity: { value: {"unit": "profile_changes", "operator": "gte", "threshold": 1, "windowDays": 14}, enabled: true, action: 'refer' },
+    pre_application_inflow_spike: { value: {"unit": "multiplier", "operator": "gt", "currentWindowDays": 30, "baselineWindowDays": 90, "multiplierThreshold": 3}, enabled: true, action: 'refer' },
     device_change_frequency: { value: {}, enabled: false, action: 'refer' },
+    dormant_then_suddenly_active: { value: {"dormancyMaxActiveDays": 0, "dormancyThresholdDays": 23, "reactivationWindowDays": 7, "reactivationMinActiveDays": 5}, enabled: true, action: 'refer' },
   },
   layer_3: {
-    band_table: { value: {"rows": [{"outputs": {"band": "A", "decision": "approve", "depositPct": 0, "maxTenureMonths": 6}, "rangeMax": 100, "rangeMin": 85}, {"outputs": {"band": "B", "decision": "approve", "depositPct": 10, "maxTenureMonths": 6}, "rangeMax": 85, "rangeMin": 70}, {"outputs": {"band": "C", "decision": "refer", "depositPct": 20, "maxTenureMonths": 4}, "rangeMax": 70, "rangeMin": 50}, {"outputs": {"band": "D", "decision": "refer", "depositPct": 30, "maxTenureMonths": 3}, "rangeMax": 50, "rangeMin": 30}, {"outputs": {"band": "E", "decision": "decline"}, "rangeMax": 30, "rangeMin": 0}]}, enabled: true },
     predicted_confidence_band_table: { value: {"rows": [{"outputs": {"band": "A"}, "rangeMax": 100, "rangeMin": 85}, {"outputs": {"band": "B"}, "rangeMax": 85, "rangeMin": 70}, {"outputs": {"band": "C"}, "rangeMax": 70, "rangeMin": 50}, {"outputs": {"band": "D"}, "rangeMax": 50, "rangeMin": 30}, {"outputs": {"band": "E"}, "rangeMax": 30, "rangeMin": 0}]}, enabled: true },
     limit_matrix: { value: {"rows": ["A", "B", "C", "D"], "cells": [[1, 1, 0.85, 0.7], [0.9, 0.75, 0.65, 0.55], [0.65, 0.5, 0.4, 0.35], [0.35, 0.25, 0.2, "refer"]], "rowKey": "band", "columns": [{"max": 10, "label": "under_10pct"}, {"max": 15, "label": "10_15pct"}, {"max": 20, "label": "15_20pct"}, {"max": 25, "label": "20_25pct"}]}, enabled: true },
-    master_approval_cutoff: { value: {"value": 35}, enabled: true },
+    master_approval_cutoff: { value: {"unit": "score", "operator": "gte", "threshold": 35}, enabled: true },
     refer_band_boundaries: { value: {"rows": [{"outputs": {"bands": ["D"]}, "rangeMax": null, "rangeMin": null}]}, enabled: true },
-    score_source_cap: { value: {"value": "C"}, enabled: true },
-    manual_review_capacity: { value: {"value": 50}, enabled: true },
+    score_source_cap: { value: {"unit": "max_band", "value": "C"}, enabled: true },
+    manual_review_capacity: { value: {"unit": "applications_per_day", "value": 0}, enabled: false },
+    referral_policy: { value: {"fallbacks": {"layer_1": {"action": "decline"}, "layer_2": {"action": "decline"}, "layer_3": {"action": "decline", "depositUpliftPct": null}}, "referralsEnabled": false}, enabled: true },
+    band_table: { value: {"rows": [{"outputs": {"band": "A", "decision": "approve", "depositPct": 0, "maxTenureMonths": 6}, "rangeMax": 100, "rangeMin": 85}, {"outputs": {"band": "B", "decision": "approve", "depositPct": 10, "maxTenureMonths": 6}, "rangeMax": 85, "rangeMin": 70}, {"outputs": {"band": "C", "decision": "approve", "depositPct": 20, "maxTenureMonths": 4}, "rangeMax": 70, "rangeMin": 50}, {"outputs": {"band": "D", "decision": "refer", "depositPct": 30, "maxTenureMonths": 3}, "rangeMax": 50, "rangeMin": 30}, {"outputs": {"band": "E", "decision": "decline"}, "rangeMax": 30, "rangeMin": 0}]}, enabled: true },
   },
   layer_3a: {
-    scorecard_cap: { value: {"value": "C"}, enabled: true },
-    average_wallet_balance_points: { value: {"rows": [], "maxPoints": 20}, enabled: false },
-    wallet_tenure_points: { value: {"rows": [], "maxPoints": 15}, enabled: false },
-    active_days_last_30_points: { value: {"rows": [], "maxPoints": 15}, enabled: false },
-    positive_cashflow_day_ratio_points: { value: {"rows": [], "maxPoints": 15}, enabled: false },
-    transaction_count_last_30_points: { value: {"rows": [], "maxPoints": 10}, enabled: false },
-    minimum_wallet_balance_points: { value: {"rows": [], "maxPoints": 10}, enabled: false },
-    inflow_regularity_points: { value: {"rows": [], "maxPoints": 10}, enabled: false },
-    kyc_completeness_points: { value: {"rows": [], "maxPoints": 5}, enabled: false },
-    starter_limit_thin_file: { value: {"value": 50}, enabled: true },
-    starter_limit_no_file: { value: {"value": 30}, enabled: true },
-    ladder_max_tenure: { value: {"value": 3}, enabled: true },
-    ladder_deposit_requirement: { value: {"value": 30}, enabled: true },
-    loans_required_to_graduate: { value: {"value": 1}, enabled: true },
-    limit_increase_per_cycle: { value: {"value": 50}, enabled: true },
-    max_ladder_limit: { value: {"value": 250}, enabled: true },
-    reset_on_delinquency: { value: {"operator": "gte", "threshold": 30}, enabled: true },
-    cooling_period_after_decline: { value: {"value": 30}, enabled: true },
+    scorecard_cap: { value: {"unit": "max_band", "value": "C"}, enabled: true },
+    average_wallet_balance_points: { value: {"rows": [{"outputs": {"points": 0}, "rangeMax": 4.74, "rangeMin": null}, {"outputs": {"points": 6.67}, "rangeMax": 10.92, "rangeMin": 4.74}, {"outputs": {"points": 13.33}, "rangeMax": 24.42, "rangeMin": 10.92}, {"outputs": {"points": 20}, "rangeMax": null, "rangeMin": 24.42}], "feature": "balanceAvg30d", "maxPoints": 20}, enabled: true },
+    wallet_tenure_points: { value: {"rows": [{"outputs": {"points": 0}, "rangeMax": 29, "rangeMin": 0}, {"outputs": {"points": 5}, "rangeMax": 89, "rangeMin": 30}, {"outputs": {"points": 10}, "rangeMax": 179, "rangeMin": 90}, {"outputs": {"points": 15}, "rangeMax": null, "rangeMin": 180}], "feature": "accountTenureDays", "maxPoints": 15}, enabled: true },
+    active_days_last_30_points: { value: {"rows": [{"outputs": {"points": 0}, "rangeMax": 2, "rangeMin": 0}, {"outputs": {"points": 5}, "rangeMax": 7, "rangeMin": 3}, {"outputs": {"points": 10}, "rangeMax": 15, "rangeMin": 8}, {"outputs": {"points": 15}, "rangeMax": null, "rangeMin": 16}], "feature": "activeDays30d", "maxPoints": 15}, enabled: true },
+    positive_cashflow_day_ratio_points: { value: {"rows": [{"outputs": {"points": 0}, "rangeMax": 0.33, "rangeMin": null}, {"outputs": {"points": 5}, "rangeMax": 0.5, "rangeMin": 0.33}, {"outputs": {"points": 10}, "rangeMax": 0.64, "rangeMin": 0.5}, {"outputs": {"points": 15}, "rangeMax": null, "rangeMin": 0.64}], "feature": "positiveCashflowRatio90d", "maxPoints": 15}, enabled: true },
+    transaction_count_last_30_points: { value: {"rows": [{"outputs": {"points": 0}, "rangeMax": 4, "rangeMin": 0}, {"outputs": {"points": 3.33}, "rangeMax": 8, "rangeMin": 5}, {"outputs": {"points": 6.67}, "rangeMax": 15, "rangeMin": 9}, {"outputs": {"points": 10}, "rangeMax": null, "rangeMin": 16}], "feature": "transactionCount30d", "maxPoints": 10}, enabled: true },
+    minimum_wallet_balance_points: { value: {"rows": [{"outputs": {"points": 0}, "rangeMax": 0, "rangeMin": null}, {"outputs": {"points": 3.33}, "rangeMax": 0.01, "rangeMin": 0}, {"outputs": {"points": 6.67}, "rangeMax": 0.17, "rangeMin": 0.01}, {"outputs": {"points": 10}, "rangeMax": null, "rangeMin": 0.17}], "feature": "balanceMin30d", "maxPoints": 10}, enabled: true },
+    inflow_regularity_points: { value: {"rows": [], "feature": null, "maxPoints": 10}, enabled: false },
+    kyc_completeness_points: { value: {"rows": [{"values": ["SELFREGSUB"], "outputs": {"points": 0}}, {"values": ["BANKSUBS", "GOLDSUBS", "FARMERS", "CARDSUBMAS"], "outputs": {"points": 5}}], "feature": "kycLevel", "maxPoints": 5}, enabled: true },
   },
   layer_4: {
-    balance_proxy_intercept: { value: {"value": 25}, enabled: true },
-    minimum_monthly_income: { value: {"operator": "gte", "threshold": 100}, enabled: true },
-    instalment_to_income_cap: { value: {"operator": "lte", "threshold": 25}, enabled: true },
-    net_disposable_income_floor: { value: {"operator": "gte", "threshold": 50}, enabled: true },
+    instalment_to_income_cap: { value: {"unit": "percent", "operator": "lte", "threshold": 25}, enabled: true },
     existing_obligation_deduction: { value: {"expectedValue": true}, enabled: true },
-    income_stability_requirement: { value: {"operator": "lte", "threshold": 0.5}, enabled: true },
-    income_confidence_threshold: { value: {"operator": "gte", "threshold": 70}, enabled: true },
-    haircut_low_confidence: { value: {"value": 25}, enabled: true },
-    haircut_thin_no_file: { value: {"value": 40}, enabled: true },
-    balance_proxy_coefficient: { value: {"value": 0.5}, enabled: true },
+    income_confidence_threshold: { value: {"unit": "percent", "operator": "gte", "threshold": 70}, enabled: true },
+    haircut_low_confidence: { value: {"unit": "percent", "value": 25}, enabled: true },
+    balance_proxy_intercept: { value: {"unit": "USD", "value": 90}, enabled: true },
+    balance_proxy_coefficient: { value: {"unit": "multiplier", "value": 5}, enabled: true },
+    income_stability_requirement: { value: {"unit": "coefficient_of_variation", "operator": "lte", "threshold": 1.5}, enabled: true },
+    net_disposable_income_floor: { value: {"unit": "USD", "operator": "gte", "threshold": 0}, enabled: true },
+    haircut_thin_no_file: { value: {"unit": "percent", "value": 25}, enabled: true },
+    minimum_monthly_income: { value: {"unit": "USD", "operator": "gte", "threshold": 50}, enabled: true },
   },
   layer_6: {
-    max_thin_file_share_of_approvals: { value: {"value": 40}, enabled: true },
-    daily_disbursement_cap: { value: {"value": null}, enabled: false },
-    new_to_credit_concentration_cap: { value: {"value": 50}, enabled: true },
-    automatic_tightening_trigger: { value: {"operator": "gte", "threshold": 1.5}, enabled: false, action: 'tighten_by_one_band' },
+    max_thin_file_share_of_approvals: { value: {"unit": "percent", "operator": "lt", "threshold": 40}, enabled: false },
+    daily_disbursement_cap: { value: {"unit": "USD_per_day", "value": null}, enabled: false },
+    new_to_credit_concentration_cap: { value: {"unit": "percent", "operator": "lt", "threshold": 50}, enabled: false },
+    automatic_tightening_trigger: { value: {"unit": "delinquency_percent", "operator": "gte", "threshold": 1.5}, enabled: false, action: 'tighten_by_one_band' },
     kill_switch: { value: {"expectedValue": false}, enabled: true },
-    random_approval_holdout: { value: {"value": 2}, enabled: false },
+    random_approval_holdout: { value: {"unit": "percent", "value": 2}, enabled: false },
   },
 };
 
-// Read out of the layer_3 band_table rule. Ranges are open until the first
-// training run places them against the observed score distribution.
+// The product profile as the engine holds it.
+const PROFILE_VALUES = {
+  "maxLadderLimit": 250,
+  "productMaximum": 500,
+  "depositFloorPct": 0,
+  "ladderDepositPct": 30,
+  "permittedTenures": [
+    3,
+    4,
+    6
+  ],
+  "minimumViableLimit": 20,
+  "starterLimitNoFile": 30,
+  "starterLimitThinFile": 50,
+  "ladderMaxTenureMonths": 3,
+  "limitRoundingIncrement": 10,
+  "loansRequiredToGraduate": 1,
+  "limitIncreasePerCyclePct": 50,
+  "totalCustomerExposureCap": 750,
+  "coolingPeriodAfterDeclineDays": 30,
+  "resetOnDelinquencyDaysPastDue": 30
+};
+
+const ENGINE_VERSIONS = { ruleVersionId: 'fea92de9-8bc9-405c-9c83-e5195b254afe', profileId: '1443698d-a76e-4098-a858-d0788383776b', profileRevision: 1, readAt: '2026-10-08' };
+
+// Read out of the layer_3 band_table rule.
 const BAND_ROWS = [
   { band: 'A', rangeMin: 85, rangeMax: 100, decision: 'approve', multiplier: null, maxTenureMonths: 6, depositPct: 0 },
   { band: 'B', rangeMin: 70, rangeMax: 85, decision: 'approve', multiplier: null, maxTenureMonths: 6, depositPct: 10 },
-  { band: 'C', rangeMin: 50, rangeMax: 70, decision: 'refer', multiplier: null, maxTenureMonths: 4, depositPct: 20 },
+  { band: 'C', rangeMin: 50, rangeMax: 70, decision: 'approve', multiplier: null, maxTenureMonths: 4, depositPct: 20 },
   { band: 'D', rangeMin: 30, rangeMax: 50, decision: 'refer', multiplier: null, maxTenureMonths: 3, depositPct: 30 },
   { band: 'E', rangeMin: 0, rangeMax: 30, decision: 'decline', multiplier: null, maxTenureMonths: null, depositPct: null },
 ];
 
 // The band by affordability-share matrix, layer_3 limit_matrix.
-const LIMIT_MATRIX = { rows: ["A", "B", "C", "D"], cols: [{"max": 10, "label": "under_10pct"}, {"max": 15, "label": "10_15pct"}, {"max": 20, "label": "15_20pct"}, {"max": 25, "label": "20_25pct"}], cells: [[1, 1, 0.85, 0.7], [0.9, 0.75, 0.65, 0.55], [0.65, 0.5, 0.4, 0.35], [0.35, 0.25, 0.2, "refer"]] };
+const LIMIT_MATRIX = { rows: ["A", "B", "C", "D"], columns: [{"max": 10, "label": "under_10pct"}, {"max": 15, "label": "10_15pct"}, {"max": 20, "label": "15_20pct"}, {"max": 25, "label": "20_25pct"}], cells: [[1, 1, 0.85, 0.7], [0.9, 0.75, 0.65, 0.55], [0.65, 0.5, 0.4, 0.35], [0.35, 0.25, 0.2, "refer"]] };
 
 const CONFIDENCE_BANDS = [{"band": "A", "rangeMin": 85, "rangeMax": 100}, {"band": "B", "rangeMin": 70, "rangeMax": 85}, {"band": "C", "rangeMin": 50, "rangeMax": 70}, {"band": "D", "rangeMin": 30, "rangeMax": 50}, {"band": "E", "rangeMin": 0, "rangeMax": 30}];
+
+// Whether manual review exists, and what each source does when it does not.
+const REFERRAL_POLICY = {
+  "fallbacks": {
+    "layer_1": {
+      "action": "decline"
+    },
+    "layer_2": {
+      "action": "decline"
+    },
+    "layer_3": {
+      "action": "decline",
+      "depositUpliftPct": null
+    }
+  },
+  "referralsEnabled": false
+};
 
 const LAYER_KEYS = LAYERS.map(l => l.key);
 
@@ -690,6 +728,16 @@ const AA_BAD = { A: 2.1, B: 3.9, C: 6.8, D: 12.1, E: 28.4 };
 
 const TITLE = { approve: 'Approve', refer: 'Refer', decline: 'Decline' };
 
+// Referrals can be switched off engine-wide. When they are, a band that would
+// have referred takes the fallback action its layer declares, so the table
+// shows what the customer actually gets rather than a queue nobody works.
+function effectiveDecision(decision, layerKey) {
+  if (decision !== 'refer') return { decision, viaFallback: false };
+  if (REFERRAL_POLICY.referralsEnabled) return { decision, viaFallback: false };
+  const fb = (REFERRAL_POLICY.fallbacks || {})[layerKey] || {};
+  return { decision: fb.action || 'decline', viaFallback: true };
+}
+
 // The band table leaves multiplier null because the limit matrix supplies it on
 // two axes. For the indicative figure the band row shows, take the matrix cell
 // for the most generous affordability column; the real offer is computed from
@@ -705,33 +753,40 @@ function headlineMultiplier(band) {
 // field names, so the console renders one vocabulary while the data stays the
 // engine's. Ordered lowest band first, which is how the ruler reads.
 function bandsFrom(pop, bad) {
-  return BAND_ROWS.slice().reverse().map(b => ({
+  return BAND_ROWS.slice().reverse().map(b => {
+    const eff = effectiveDecision(b.decision, 'layer_3');
+    return {
     ...b,
     label: b.band,
     floor: b.rangeMin ?? 0,
-    decision: TITLE[b.decision] || b.decision,
+    authoredDecision: TITLE[b.decision] || b.decision,
+    viaFallback: eff.viaFallback,
+    decision: TITLE[eff.decision] || eff.decision,
     multiplier: b.multiplier ?? headlineMultiplier(b.band),
     maxTenure: b.maxTenureMonths,
     deposit: b.depositPct,
     pop: pop ? (pop[b.band] ?? 0) : 0,
     badRate: bad ? (bad[b.band] ?? null) : null,
-  }));
+  };
+  });
 }
 const DF_BANDS = bandsFrom(DF_POP, DF_BAD);
 const AA_BANDS = bandsFrom(AA_POP, AA_BAD);
 const EMPTY_BANDS = bandsFrom(null, null);
 
-// A profile starts from the values the engine's ACTIVE rule set actually holds,
-// so an unedited profile here and an unedited product there agree. Only the
-// product profile at L5 differs between products; L0 to L4 and L6 are
-// product-agnostic by design.
+// Device Financing starts from exactly what the engine holds. The other two
+// products have no profile on the engine, so they start from the same shape
+// with their own figures. L0 to L4 and L6 are product-agnostic by design, so
+// only L5 differs between them.
 const PROFILE_L5 = {
-  df:    { productMaximum: 500, minimumViableLimit: 30, totalCustomerExposureCap: 750,
-           limitRoundingIncrement: 10, permittedTenures: [3, 4, 6], depositFloorPct: 0 },
-  aa:    { productMaximum: 15, minimumViableLimit: 1, totalCustomerExposureCap: 750,
-           limitRoundingIncrement: 1, permittedTenures: [1], depositFloorPct: 0 },
-  blank: { productMaximum: null, minimumViableLimit: null, totalCustomerExposureCap: null,
-           limitRoundingIncrement: null, permittedTenures: [], depositFloorPct: null },
+  df: PROFILE_VALUES,
+  aa: { ...PROFILE_VALUES, productMaximum: 15, minimumViableLimit: 1,
+        limitRoundingIncrement: 1, permittedTenures: [1],
+        starterLimitThinFile: 2, starterLimitNoFile: 1, ladderMaxTenureMonths: 1,
+        ladderDepositPct: 0, maxLadderLimit: 15 },
+  // Nothing set yet: every field is a decision the credit team has still to make.
+  blank: Object.fromEntries(Object.keys(PROFILE_VALUES).map(k =>
+    [k, Array.isArray(PROFILE_VALUES[k]) ? [] : null])),
 };
 
 function seedLayers(product) {

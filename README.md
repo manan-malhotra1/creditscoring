@@ -24,7 +24,8 @@ parameter keys and value shapes are generated from the engine's own rule frame
 1. **Decision waterfall**, L0 to L6 in evaluation order: L0 data sufficiency and
    routing, L1 hard knockouts, L2 fraud and first-payment-default screens,
    L3 score decisioning and bands, L3a fallback scorecard and the credit ladder,
-   L4 affordability, L5 exposure and limit assignment, L6 portfolio controls
+   L4 affordability, L5 exposure, limits and the credit ladder (the product
+   profile), L6 portfolio controls
 2. **Assess a customer**: one applicant run down the whole waterfall, showing
    which layer decided and which cap bound the limit
 3. **What-if simulation**: projected impact, derived from the profile's own bands
@@ -37,8 +38,14 @@ generator. After a rule-set change on the engine, re-read the frame and
 regenerate, rather than hand-editing the layer definitions:
 
 ```bash
-python3 api-tests/run.py
+python3 api-tests/genlayers.py   # re-read the frame and profile, rewrite data.js
+python3 api-tests/run.py         # smoke test the API
 ```
+
+`genlayers.py` reads `GET /rule-versions/frame` and `GET /product-profiles`,
+and rewrites the layer model in `data.js` from them. Copy lives in
+`api-tests/meanings.py`, keyed by the engine's own rule keys, so regenerating
+keeps the explanations and refreshes everything else.
 
 ## Design decisions worth knowing
 

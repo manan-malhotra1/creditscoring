@@ -1,5 +1,7 @@
-# Copy for each rule, keyed by the engine's own rule key. Wording follows the
-# Technical Solutioning v2.1 sections noted on each layer.
+# Copy for each rule and profile field, keyed by the engine's own key.
+# Wording follows Technical Solutioning v2.1. Regenerate data.js with
+# api-tests/genlayers.py after a rule-set change on the engine.
+
 LAYER_META = {
  'layer_0': dict(num='L0', ref='§6.2', title='Data sufficiency and routing',
    question='Is there enough data to score this customer at all?',
@@ -9,19 +11,19 @@ LAYER_META = {
    intro='Absolute eligibility, and eligibility only. The evidence thresholds sit at L0, which is what lets a genuinely new customer pass here and reach a starter offer. These are not risk judgements and the score does not affect them.'),
  'layer_2': dict(num='L2', ref='§6.4', title='Fraud and first-payment-default screens',
    question='Does the application carry identity risk?',
-   intro='Identity risk rather than credit risk, where the warning signs and the remedies both differ. Most of these refer rather than decline, because fraud rules always catch some genuine customers. SIM registration age and swap history are not available from the data and are deliberately not part of this design.'),
+   intro='Identity risk rather than credit risk, where the warning signs and the remedies both differ. SIM registration age and swap history are not available from the data and are deliberately not part of this design.'),
  'layer_3': dict(num='L3', ref='§6.5', title='Score decisioning and bands',
    question='What band does the customer fall into, and what is the indicative offer?',
-   intro='Converts risk into an indicative offer for a scored customer. Score ranges are left open until the first training run, then placed against the observed distribution using a band calibration report of population share and bad rate by vigintile.'),
- 'layer_3a': dict(num='L3a', ref='§6.6', title='Fallback scorecard and the credit ladder',
-   question='How is a customer the model cannot score handled?',
-   intro='Thin-file and no-file customers cannot be scored by the model, so a points scorecard scores them on observed signals onto the same 0 to 100 scale and they enter the same band table. It is deterministic arithmetic over features Layer B already holds, not a trained model, so the boundary between scoring and decisioning still holds. It is a bridge, not a permanent parallel system.'),
+   intro='Converts risk into an indicative offer. The band table sets the shape of the offer; the limit matrix refines it downward on the score band and the affordability share together.'),
+ 'layer_3a': dict(num='L3a', ref='§6.6', title='Fallback scorecard',
+   question='How is a customer the model cannot score given a score?',
+   intro='Thin-file and no-file customers cannot be scored by the model, so a points scorecard scores them on observed signals onto the same 0 to 100 scale and they enter the same band table. Deterministic arithmetic over features Layer B already holds, not a trained model. Each attribute names the feature it reads and the bands that award its points.'),
  'layer_4': dict(num='L4', ref='§6.7', title='Affordability',
    question='Is this specific instalment sustainable against income?',
    intro='A different question from the score. It applies to every path, including thin file and no file, with no bypass. Income is derived, never taken from gross inflow: balance is a stock and income is a flow, and neither is sufficient alone.'),
- 'layer_5': dict(num='L5', ref='§6.8', title='Exposure and limit assignment',
+ 'layer_5': dict(num='L5', ref='§6.8', title='Exposure, limits and the credit ladder',
    question='What is the final limit, taken as the lowest of every applicable cap?',
-   intro='Produces the final number as the lowest cap that applies. Limits are the most effective loss control available, because loss is exposure multiplied by default rate and a cutoff moves only the second term. These values live in the product profile rather than the rule set, and are the only product-specific layer.'),
+   intro='Produces the final number as the lowest cap that applies. Limits are the most effective loss control available, because loss is exposure multiplied by default rate and a cutoff moves only the second term. Every value here lives on the product profile rather than the rule set, which is why this is the only product-specific layer, and why the credit ladder moved here: a starter limit is a property of the product.'),
  'layer_6': dict(num='L6', ref='§6.9', title='Portfolio controls',
    question='Does this approval remain acceptable for the book as a whole?',
    intro='Every rule so far judges an individual customer; these protect the book. Their absence is usually what causes difficulty months later, when the book has quietly concentrated in the riskiest segment.'),
@@ -29,7 +31,6 @@ LAYER_META = {
 
 # key -> (label, essential, meaning)
 M = {
- # L0
  'feature_completeness': ('Feature completeness', True, 'Share of the features the model needs that are actually present for this customer. If the model uses 40 features and 28 are there, completeness is 70 percent.'),
  'wallet_tenure': ('Wallet tenure', True, 'Days since the Ecocash account was opened. Behaviour observed over a short period is not reliable evidence, so this is the floor for trusting a score at all.'),
  'transaction_history': ('Transaction history', True, 'Distinct days in the last 90 on which the customer transacted. Measures genuine activity rather than a dormant account with one transaction.'),
@@ -37,7 +38,6 @@ M = {
  'model_confidence': ('Model confidence', True, 'Confidence returned alongside the score. Below the floor the score is not trusted. This one routes to thin file and never to no file, because low confidence is the model’s problem, not the customer’s.'),
  'score_staleness_limit': ('Score staleness limit', False, 'How many cycles old a score may be before it is out of date. Scores recalculate every cycle, so this mainly catches a pipeline failure going unnoticed.'),
  'repeat_path_threshold': ('Repeat path threshold', False, 'How many closed loans before a customer is treated as a repeat borrower rather than a new one.'),
- # L1
  'minimum_age': ('Minimum age', True, 'Youngest customer who may be offered credit.'),
  'maximum_age_at_maturity': ('Maximum age at maturity', True, 'Oldest a customer may be when the final instalment falls due, not when they apply.'),
  'kyc_status': ('KYC status', True, 'Which verification tiers are eligible. Carried through the serving store as a raw eligibility field, because it is excluded from the model feature set.'),
@@ -45,28 +45,26 @@ M = {
  'deceased_indicator': ('Deceased indicator', False, 'Excludes an account flagged as belonging to a deceased customer.'),
  'prior_default_lookback': ('Prior default with Ecocash', True, 'Excludes a customer who has defaulted with Ecocash inside this window. Commercial rather than technical: a lookback trades safety against a smaller customer base. Set it knowing the daily data lag.'),
  'currently_delinquent': ('Currently delinquent', True, 'Days past due on any open loan above which a new loan is refused.'),
- 'concurrent_loan_cap': ('Concurrent loan cap', True, 'How many loans a customer may hold at once. A cap of one is conservative for device financing; taking several at once is the fastest route to over-indebtedness.'),
+ 'concurrent_loan_cap': ('Concurrent loan cap', True, 'How many loans a customer may hold at once. Taking several at once is the fastest route to over-indebtedness.'),
  'blacklist_debarment': ('Blacklist or debarment', True, 'Excludes a customer on a blacklist or under debarment.'),
  'fraud_aml_flag': ('Fraud or AML flag', True, 'Excludes a customer carrying a fraud or anti-money-laundering flag. Non-negotiable, and cannot be waived by taking a deposit.'),
- 'staff_related_parties': ('Staff and related parties', False, 'Employees and connected parties. Routed to review rather than declined, for governance reasons rather than risk ones.'),
- # L2
- 'minimum_account_age': ('Minimum account age', False, 'Wallet age below which the application is referred. Distinct from the L0 threshold, which asks whether a score can be trusted.'),
+ 'staff_related_parties': ('Staff and related parties', False, 'Employees and connected parties, handled for governance reasons rather than risk ones.'),
+ 'minimum_account_age': ('Minimum account age', False, 'Wallet age below which the application is stopped. Distinct from the L0 threshold, which asks whether a score can be trusted.'),
  'application_velocity': ('Application velocity', False, 'Repeated applications in a short window suggest shopping for an approval. Computed live rather than from the daily extract.'),
  'dormant_then_suddenly_active': ('Dormant then suddenly active', False, 'An account that was quiet and then became busy shortly before applying.'),
  'profile_change_velocity': ('Profile change velocity', False, 'KYC or contact details changing just before an application is an account-takeover signal.'),
  'pre_application_inflow_spike': ('Pre-application inflow spike', False, 'Compares recent inflow against the longer baseline. A sudden spike can mean the wallet was funded to look more creditworthy.'),
  'device_change_frequency': ('Device change frequency', False, 'How often the device on the account has changed. Frequent changes can indicate device resale, which matters directly when the loan finances a device.'),
- # L3
- 'band_table': ('Score bands', True, 'The band each score falls into, and the indicative offer that comes with it. Ranges stay open until the first training run places them against the observed distribution.'),
+ 'band_table': ('Score bands', True, 'The band each score falls into, and the indicative offer that comes with it.'),
  'predicted_confidence_band_table': ('Predicted confidence bands', False, 'Bands the model’s repayment confidence falls into, reported alongside the credit band. Informational: it does not set the offer.'),
  'limit_matrix': ('Limit matrix', True, 'The indicative multiplier on two axes: the score band, and the share of income the instalment would take. The affordability share comes from the maximum sustainable instalment computed at L4, not from the offer, which would be circular. The matrix only ever refines the offer downward, and the L4 cap still applies afterwards.'),
  'master_approval_cutoff': ('Master approval cutoff', True, 'A single score floor below which nobody is approved, whatever the band table says. The main lever for tightening or loosening overall.'),
- 'refer_band_boundaries': ('Refer band boundaries', True, 'Which bands route to manual review rather than being decided automatically.'),
+ 'refer_band_boundaries': ('Refer band boundaries', False, 'Which bands would route to manual review. Dormant while referrals are switched off: those bands fall back to the action set in the referral policy.'),
+ 'referral_policy': ('Referral policy', True, 'Whether manual review exists at all, and what each referral source does instead when it does not. With referrals off, every band or screen that would have referred takes its fallback action, so no application can sit in a queue that nobody is working.'),
  'score_source_cap': ('Score source cap', True, 'The highest band a scorecard score may reach. Model discrimination can only be measured on the model-scored population, so a scorecard score is held below the top bands.'),
- 'manual_review_capacity': ('Manual review capacity', True, 'The most referred applications the team can handle per day. Once capacity is reached each referral falls back to a defined action for its source rather than queueing.'),
- # L3a
+ 'manual_review_capacity': ('Manual review capacity', False, 'The most referred applications the team can handle per day. Meaningless while referrals are switched off.'),
  'scorecard_cap': ('Scorecard band cap', True, 'The top band a scorecard-scored customer can reach.'),
- 'wallet_tenure_points': ('Wallet tenure points', False, 'Points awarded for how long the wallet has been open.'),
+ 'wallet_tenure_points': ('Wallet tenure points', False, 'Points for how long the wallet has been open.'),
  'active_days_last_30_points': ('Active days points', False, 'Points for distinct days with activity in the last 30.'),
  'transaction_count_last_30_points': ('Transaction count points', False, 'Points for the number of transactions in the last 30 days.'),
  'average_wallet_balance_points': ('Average balance points', False, 'Points for the average wallet balance. The largest single contributor, because a maintained balance is the strongest thin-file signal.'),
@@ -74,16 +72,6 @@ M = {
  'positive_cashflow_day_ratio_points': ('Positive cash-flow day ratio points', False, 'Points for the share of days where money in exceeded money out.'),
  'inflow_regularity_points': ('Inflow regularity points', False, 'Points for how regularly money arrives, rather than how much.'),
  'kyc_completeness_points': ('KYC completeness points', False, 'Points for how complete the customer’s verification record is.'),
- 'starter_limit_thin_file': ('Starter limit, thin file', True, 'The most offered to a thin-file customer on a first loan.'),
- 'starter_limit_no_file': ('Starter limit, no file', True, 'The most offered to a no-file customer. Set to zero to decline this group: the decline is then produced by policy arithmetic at L5 rather than a structural gate, and the reason code names it.'),
- 'ladder_max_tenure': ('Ladder maximum tenure', False, 'The longest repayment period on a ladder loan. A shorter term means the outcome is known sooner.'),
- 'ladder_deposit_requirement': ('Ladder deposit requirement', True, 'Share of value paid upfront on a ladder loan. A deposit reduces exposure and selects for committed customers.'),
- 'loans_required_to_graduate': ('Loans required to graduate', False, 'How many loans must be repaid in full before the limit increases.'),
- 'limit_increase_per_cycle': ('Limit increase per cycle', False, 'How much the limit rises after each successfully repaid loan, as a share of the previous limit.'),
- 'max_ladder_limit': ('Maximum limit via the ladder', False, 'The ceiling reachable through the ladder alone, before normal band scoring applies.'),
- 'reset_on_delinquency': ('Reset on delinquency', False, 'The level of lateness that resets a customer to the starter limit.'),
- 'cooling_period_after_decline': ('Cooling period after decline', False, 'How long a declined customer waits before applying again.'),
- # L4
  'instalment_to_income_cap': ('Instalment to income cap', True, 'The largest share of monthly income the instalment may represent. With income of $400 and a cap of 25 percent, the maximum instalment is $100.'),
  'net_disposable_income_floor': ('Net disposable income floor', True, 'The minimum that must remain after estimated expenses and the new instalment. Protects customers who pass the ratio test but have very little margin.'),
  'existing_obligation_deduction': ('Existing obligation deduction', False, 'Whether instalments on the customer’s existing Ecocash loans are subtracted from income first. Loans held with other lenders are invisible until bureau or Credit Registry data is available.'),
@@ -94,7 +82,6 @@ M = {
  'haircut_thin_no_file': ('Haircut, thin file and no file', True, 'A deeper reduction for customers with little history, set conservatively because obligations to other lenders cannot be seen.'),
  'balance_proxy_coefficient': ('Balance proxy coefficient', False, 'Fitted, not chosen: derived by regressing derived income against average and median balance on the population where both are computable with high confidence, then applied where derivation fails.'),
  'balance_proxy_intercept': ('Balance proxy intercept', False, 'The constant term of the same fitted relationship.'),
- # L6
  'max_thin_file_share_of_approvals': ('Maximum thin-file share of approvals', True, 'The share of daily approvals that may go to thin-file customers. Stops the book filling with the least-known customers during a growth push.'),
  'daily_disbursement_cap': ('Daily disbursement cap', True, 'A ceiling on the total amount disbursed per day. Controls the pace at which exposure builds.'),
  'new_to_credit_concentration_cap': ('New-to-credit concentration cap', True, 'The largest share of the book made up of customers with no prior repayment history.'),
@@ -103,12 +90,21 @@ M = {
  'random_approval_holdout': ('Random approval holdout', False, 'Approves a small share of applications just below the cutoff at random, so outcomes are observed for customers who would normally be declined. Without it every new model trains only on customers the previous rules passed, and becomes systematically over-optimistic.'),
 }
 
-# Product profile, L5. Keys are the API's product-profile field names.
-PROFILE = [
- ('productMaximum', 'Product maximum', 'currency', True, 'The highest limit this product can ever offer. Band multipliers are applied to this figure.'),
- ('minimumViableLimit', 'Minimum viable limit', 'currency', False, 'If every cap combined comes out below this, no offer is made. This is also how a no-file customer with a zero starter limit is declined, by arithmetic rather than a gate.'),
- ('totalCustomerExposureCap', 'Total customer exposure cap', 'currency', True, 'The most a customer may owe across all Ecocash credit at once: existing outstanding balance plus the new limit.'),
- ('limitRoundingIncrement', 'Limit rounding increment', 'currency', False, 'The final limit is rounded down to a multiple of this, so customers are offered clean amounts.'),
- ('permittedTenures', 'Permitted tenures', 'tenures', True, 'The repayment periods, in months, that may be offered at all. A band can only pick from this list.'),
- ('depositFloorPct', 'Deposit floor', 'percent', False, 'A minimum deposit applied whatever the band says.'),
-]
+# The product profile at L5. Keys are the engine's own field names.
+PROFILE = {
+ 'productMaximum': ('Product maximum', 'currency', True, 'The highest limit this product can ever offer. Band multipliers are applied to this figure.'),
+ 'minimumViableLimit': ('Minimum viable limit', 'currency', True, 'If every cap combined comes out below this, no offer is made. This is also how a no-file customer with a zero starter limit is declined, by arithmetic rather than a gate.'),
+ 'totalCustomerExposureCap': ('Total customer exposure cap', 'currency', True, 'The most a customer may owe across all Ecocash credit at once: existing outstanding balance plus the new limit.'),
+ 'limitRoundingIncrement': ('Limit rounding increment', 'currency', False, 'The final limit is rounded down to a multiple of this, so customers are offered clean amounts.'),
+ 'permittedTenures': ('Permitted tenures', 'tenures', True, 'The repayment periods, in months, that may be offered at all. A band can only pick from this list.'),
+ 'depositFloorPct': ('Deposit floor', 'percent', False, 'A minimum deposit applied whatever the band says.'),
+ 'starterLimitThinFile': ('Starter limit, thin file', 'currency', True, 'The most offered to a thin-file customer on a first loan.'),
+ 'starterLimitNoFile': ('Starter limit, no file', 'currency', True, 'The most offered to a customer with no history at all. Set this to zero to decline that group instead: the decline then comes from the minimum viable limit, and the reason code names it.'),
+ 'ladderMaxTenureMonths': ('Ladder maximum tenure', 'months', False, 'The longest repayment period on a ladder loan. A shorter term means the outcome is known sooner.'),
+ 'ladderDepositPct': ('Ladder deposit requirement', 'percent', True, 'Share of value paid upfront on a ladder loan. A deposit reduces exposure and selects for committed customers.'),
+ 'loansRequiredToGraduate': ('Loans required to graduate', 'count', False, 'How many loans must be repaid in full before the limit increases.'),
+ 'limitIncreasePerCyclePct': ('Limit increase per cycle', 'percent', False, 'How much the limit rises after each successfully repaid loan, as a share of the previous limit.'),
+ 'maxLadderLimit': ('Maximum limit via the ladder', 'currency', False, 'The ceiling reachable through the ladder alone, after which normal band scoring applies.'),
+ 'resetOnDelinquencyDaysPastDue': ('Reset on delinquency', 'days', False, 'The level of lateness that resets a laddered customer to the starter limit.'),
+ 'coolingPeriodAfterDeclineDays': ('Cooling period after decline', 'days', False, 'How long a declined customer waits before applying again.'),
+}
